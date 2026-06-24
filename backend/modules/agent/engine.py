@@ -211,7 +211,7 @@ class AgentEngine:
         history = conversation_history or []
 
         # Route image requests to Gemini if Ollama lacks vision capabilities
-        if image_base64 and self.ollama_available and not self._model_supports_vision():
+        if image_base64 and self.ollama_available and not self._model_supports_vision(self.ollama_vision_model or self.ollama_model):
             if self.gemini_available:
                 return self._run_gemini(user_text, history, gps, image_base64, image_mime)
             else:
@@ -238,7 +238,7 @@ class AgentEngine:
     def _ollama_supports_native_tools(self, active_model: str) -> bool:
         """Some Ollama multimodal models accept images but reject OpenAI tool calls."""
         model = (active_model or "").lower()
-        no_tool_markers = ("vision", "llava", "gemma3")
+        no_tool_markers = ("vision", "llava", "gemma")
         return not any(marker in model for marker in no_tool_markers)
 
     def _model_supports_vision(self, active_model: str) -> bool:

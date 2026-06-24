@@ -108,10 +108,23 @@ class HybridSearch:
         embedding_tag    = "ollama" if self.embedding_function else "none"
         collection_name  = f"drivelegal_{embedding_tag}_v3"
 
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=self.embedding_function,
-        )
+        try:
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function,
+            )
+        except Exception as e:
+            # Embedding function conflict — stale collection was created with a
+            # different embedding function class. Delete it and start fresh.
+            logger.warning("ChromaDB collection conflict (%s). Deleting stale collection and rebuilding.", e)
+            try:
+                self.client.delete_collection(collection_name)
+            except Exception:
+                pass
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function,
+            )
 
         # ── BM25 ──────────────────────────────────────────────────────────────
         self.bm25: Optional[BM25Okapi] = None
