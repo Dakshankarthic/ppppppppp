@@ -61,3 +61,6 @@ backend/venv/
 
 # Local Netlify folder
 .netlify
+
+# Secrets / Keys
+*.pem
