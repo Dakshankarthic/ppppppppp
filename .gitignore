@@ -64,3 +64,8 @@ backend/venv/
 
 # Secrets / Keys
 *.pem
+
+# Scratch & Debug files
+api_*response*.json
+test_hybrid.py
+restart.sh
