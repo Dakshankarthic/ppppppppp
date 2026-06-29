@@ -245,6 +245,24 @@ TOOL_DEFINITIONS = [
             "required": ["city", "state"],
         },
     },
+    {
+        "name": "search_web",
+        "description": (
+            "Search the internet for current traffic rules, news, or general information "
+            "that might not be in the local database. Use this as a fallback if other tools "
+            "do not yield results."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 
@@ -278,6 +296,7 @@ class ToolExecutor:
                 "get_accident_risk": self._get_accident_risk,
                 "get_violation_stats": self._get_violation_stats,
                 "get_nearby_institutions": self._get_nearby_institutions,
+                "search_web": self._search_web,
             }
             handler = handlers.get(tool_name)
             if not handler:
@@ -533,3 +552,27 @@ class ToolExecutor:
         if not self.insights_engine:
             return {"error": "Insights engine not available"}
         return self.insights_engine.get_nearby_institutions(params.get("city", ""), params.get("state", ""))
+
+    def _search_web(self, params: dict, gps: Optional[dict]) -> dict:
+        query = params.get("query")
+        if not query:
+            return {"error": "No query provided"}
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            import urllib.parse
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return {"error": f"Search failed with status {resp.status_code}"}
+            soup = BeautifulSoup(resp.text, "html.parser")
+            results = []
+            for a in soup.find_all("a", class_="result__snippet", limit=5):
+                results.append(a.text.strip())
+            if not results:
+                return {"found": False, "message": "No results found on the web."}
+            return {"found": True, "results": results}
+        except Exception as e:
+            return {"error": f"Web search exception: {str(e)}"}
+
