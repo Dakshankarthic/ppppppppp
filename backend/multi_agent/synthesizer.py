@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Any, List
 import json
 from openai import AsyncOpenAI
@@ -5,6 +6,32 @@ from openai import AsyncOpenAI
 from .query_classifier import QueryIntent
 from .config import config
 from .models import SourceAnswer
+
+def format_answer_professional(text: str) -> str:
+    lines = text.split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            formatted_lines.append('')
+            continue
+        if re.match(r'^#{1,3}\s*\d+\.', stripped):
+            clean_title = re.sub(r'^#{1,3}\s*', '', stripped)
+            formatted_lines.append(f'→ {clean_title.upper()}')
+        elif re.match(r'^#{1,3}\s+', stripped) and not re.match(r'^#{1,3}\s*\d+', stripped):
+            clean_sub = re.sub(r'^#{1,3}\s*', '', stripped)
+            formatted_lines.append(f'   **{clean_sub}**')
+        elif stripped.startswith('**') and stripped.endswith('**'):
+            formatted_lines.append(f'   {stripped}')
+        elif stripped.startswith('•') or stripped.startswith('-') or stripped.startswith('*'):
+            formatted_lines.append(f'   {stripped}')
+        else:
+            if len(stripped) < 60 and stripped.endswith(':') and not stripped.startswith('→'):
+                formatted_lines.append(f'   **{stripped}**')
+            else:
+                formatted_lines.append(f'   {stripped}')
+    return '\n'.join(formatted_lines)
 
 class SmartSynthesizer:
     
@@ -49,8 +76,10 @@ class SmartSynthesizer:
             )
             display_mode = "helpful_cautious"
         
+        formatted_answer = format_answer_professional(final_answer)
+        
         output = {
-            "answer": final_answer,
+            "answer": formatted_answer,
             "display_mode": display_mode,
             "_internal_metrics": {
                 "confidence_level": internal_confidence,
@@ -105,9 +134,42 @@ TASK: Create a COMPREHENSIVE answer that:
    - Drunk driving penalties
    - Document requirements (License, RC, Insurance, PUC)
 
-Format as educational guide with clear headings.
-Be helpful and thorough. It's better to give MORE info than less.
-Length: 700-1000 words."""
+MANDATORY FORMATTING - FOLLOW EXACTLY:
+MAIN SECTIONS (use arrow format):
+→ 1. SECTION TITLE HERE
+   [content continues on next line with indent]
+
+SUBTITLES (use bold):
+**Subtitle Name Here**
+[explanation after]
+
+IMPORTANT KEY FACTS/NUMBERS (use bold):
+**Key fact or important number here**
+[context]
+
+BULLET POINTS (for lists):
+• First point
+• Second point
+
+EXAMPLE OF CORRECT FORMAT:
+
+→ 1. SPEED LIMITS
+   **Posted Limits:** Always follow the posted speed limit signs.
+   • If no sign visible, use default speed for that road type
+   
+   **Variable Speed Limits:** Some areas use digital signs that change based on traffic/weather.
+   • These digital limits are legally binding!
+   
+   **Critical Rule:** You must drive slower than the posted limit if conditions are hazardous.
+   • Heavy rain, fog, ice, or heavy pedestrian traffic = slow down!
+
+DO NOT USE:
+[X] ### Headings
+[X] ## Headings  
+[X] _Italics_ for emphasis (use bold instead)
+[X] Excessive emojis (keep it professional)
+
+Total length: 600-900 words covering ALL requested topics."""
 
         return await self._call_llm_for_enhancement(enhancement_prompt)
     
