@@ -101,7 +101,7 @@ geofencing     = GeofencingEngine(ZONES_DIR)
 
 # ── Initialize the AI Agent ───────────────────────────────────────────────────
 agent = AgentEngine(fine_lookup, rules_loader, geofencing)
-multi_agent_bot = TrafficPolicyChatbot()
+multi_agent_bot = TrafficPolicyChatbot(fine_lookup, rules_loader)
 
 # ── Request / Response Models ─────────────────────────────────────────────────
 

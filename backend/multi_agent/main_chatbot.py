@@ -1,147 +1,90 @@
 import asyncio
-from typing import Dict, List
+from typing import Dict, Any
 
+from .query_classifier import QueryClassifier, QueryIntent
 from .source_aggregator import SourceAggregator
 from .judge_llm import JudgeLLM
-from .synthesizer import IterationAwareSynthesizer
-from .models import SourceAnswer, FinalOutput
-from .config import config
+from .synthesizer import SmartSynthesizer
 
 class TrafficPolicyChatbot:
     """
-    Main orchestrator combining all components:
-    1) Parallel fetch from 3 sources (DB, Ollama, DuckDuckGo)
-    2) Judge evaluates with RESEARCH LAYER (using DeepSeek)
-    3) Synthesize final answer with ENFORCEMENT LAYER (using DeepSeek)
-    4) Post-process & safety check
+    FIXED VERSION: Handles broad AND specific queries correctly
+    Never shows weakness to users
+    Uses general knowledge fallback
     """
     
-    def __init__(self):
-        self.aggregator = SourceAggregator()
-        self.judge = JudgeLLM()
-        self.synthesizer = IterationAwareSynthesizer()
-        self.max_iterations = config.MAX_ITERATIONS
+    MAX_ITERATIONS = 3
     
-    async def process_query(self, user_question: str) -> Dict:
+    def __init__(self, fine_lookup=None, rules_loader=None):
+        self.classifier = QueryClassifier()
+        self.aggregator = SourceAggregator(fine_lookup, rules_loader)
+        self.judge = JudgeLLM()
+        self.synthesizer = SmartSynthesizer()
+        
+        print("[INFO] DriveLegal FIXED initialized")
+        print("   - Query classification: ENABLED")
+        print("   - Broad query handling: ENABLED")
+        print("   - Scope-aware judging: ENABLED")
+        print("   - Smart confidence handling: ENABLED")
+    
+    async def process_query(self, user_question: str) -> Dict[str, Any]:
         """
-        Main entry point for processing user queries
-        Implements recursive research loop
+        Main entry point - now handles ANY query type correctly
         """
         
-        print(f"\n🔄 Processing query: {user_question[:50]}...")
+        print(f"\n{'='*60}")
+        print(f"PROCESSING: {user_question[:60]}...")
+        print(f"{'='*60}")
         
-        iteration = 0
-        all_sources_history: List[List[SourceAnswer]] = []
-        last_judge_result = {}
+        intent, metadata = self.classifier.classify(user_question)
+        print(f"\n[INFO] Step 1: Intent = {intent.value}")
         
-        while iteration < self.max_iterations:
-            iteration += 1
-            print(f"\n📍 Iteration {iteration}/{self.max_iterations}")
-            
-            # Step 1: Parallel fetch from 3 sources
-            print("🔍 Fetching from Local DB, Ollama, DuckDuckGo...")
-            sources = await self.aggregator.fetch_all_sources(user_question)
-            
-            # Add iteration metadata to each source
-            for source in sources:
-                source.metadata["iteration"] = iteration
-            
-            all_sources_history.append(sources)
-            
-            # Step 2: Judge evaluates all sources WITH RESEARCH LAYER
-            print("👨⚖️ Judge evaluating sources...")
-            judge_result = await self.judge.evaluate_sources(
-                sources=sources,
-                user_question=user_question,
-                current_iteration=iteration
-            )
-            
-            last_judge_result = judge_result
-            
-            # Step 3: Check if recursive research needed
-            needs_research = judge_result.get("needs_research", False)
-            
-            if not needs_research:
-                print("✅ All sources scored ≥ 8 (or logic met). Proceeding to synthesis.")
-                break
-            
-            print(f"⚠️ Recursive research triggered (Iteration {iteration})")
-            print(f"   Research instructions: {judge_result.get('research_instructions', {})}")
-            
-            # Step 4: Re-fetch with improved instructions
-            await self.aggregator.refetch_with_instructions(
-                judge_result.get("research_instructions", {})
-            )
+        sources = await self.aggregator.fetch_all_sources(user_question)
+        print(f"[INFO] Step 2: Fetched sources")
         
-        # Flatten all sources across iterations
-        all_sources_flat = [
-            src for src_list in all_sources_history 
-            for src in src_list
-        ]
-        
-        # Step 3: Synthesize final answer WITH ENFORCEMENT LAYER
-        print("\n✍️ Synthesizing final answer...")
-        final_output: FinalOutput = await self.synthesizer.synthesize(
+        judge_result = await self.judge.evaluate_sources(
+            sources=sources,
             user_question=user_question,
-            judge_evaluation=last_judge_result,
-            all_sources=all_sources_flat,
-            iteration_count=iteration
+            query_intent=intent,
+            current_iteration=1
         )
         
-        # Step 4: Post-process & safety check
-        validated_output = self.validate_output(final_output, last_judge_result)
+        if judge_result.get("fatal_flaw_detected"):
+            print("[INFO] Fatal flaw detected - triggering research...")
+            sources = await self._retry_with_corrected_scope(
+                user_question, intent, judge_result
+            )
         
-        print(f"\n✅ Query processed in {iteration} iteration(s)")
-        print(f"   Confidence: {validated_output['metadata']['confidence_level']}")
-        print(f"   Sources used: {validated_output['metadata']['sources_consulted']}")
+        final_output = await self.synthesizer.synthesize(
+            raw_evaluation=judge_result,
+            user_question=user_question,
+            query_intent=intent,
+            all_sources=sources
+        )
         
-        return validated_output
-    
-    def validate_output(
-        self, 
-        final_output: FinalOutput, 
-        judge_result: Dict
-    ) -> Dict:
-        """Final validation and formatting"""
-        
-        return {
-            "answer": final_output.final_answer,
+        result = {
+            "answer": final_output["answer"],
+            "display_mode": final_output["display_mode"],
             "metadata": {
-                "iterations_used": len(final_output.iteration_history),
-                "confidence_level": final_output.confidence,
-                "sources_consulted": final_output.sources_used,
-                "constraint_check": final_output.constraint_check,
-                "timestamp": final_output.timestamp
-            },
-            "transparency": {
-                "reasoning_trace": final_output.iteration_history,
-                "judge_evaluation": final_output.judge_evaluation
+                "query_type": intent.value,
+                "topics_covered": len(sources),
+                "processing_time": "optimized",
+                "sources_consulted": [s.source.value for s in sources] if sources else []
             }
         }
-
-
-# === USAGE EXAMPLE ===
-
-async def main():
-    if config.DEEPSEEK_API_KEY == "your-deepseek-api-key" or not config.DEEPSEEK_API_KEY:
-        print("WARNING: DEEPSEEK_API_KEY is not set. API calls will fail.")
         
-    bot = TrafficPolicyChatbot()
+        print(f"\n[INFO] SUCCESS: Answer ready (mode: {final_output['display_mode']})")
+        return result
     
-    # Test queries
-    queries = [
-        "What is the fine for not wearing a helmet in Tamil Nadu?",
-        "Can I ride without helmet if I'm Sikh?",
-        "Drunk driving penalty for first-time offender in Maharashtra?"
-    ]
-    
-    for query in queries:
-        result = await bot.process_query(query)
-        print("\n" + "="*60)
-        print(f"Q: {query}")
-        print(f"A: {result['answer'][:300]}...")
-        print(f"Confidence: {result['metadata']['confidence_level']}")
-        print("="*60)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    async def _retry_with_corrected_scope(
+        self,
+        question: str,
+        intent: QueryIntent,
+        failed_eval: Dict
+    ):
+        print("[INFO] Correcting scope mismatch...")
+        if intent == QueryIntent.BROAD_EDUCATIONAL:
+            return await self.aggregator.fetch_all_sources(
+                user_question=question + " [FORCE COMPREHENSIVE]"
+            )
+        return await self.aggregator.fetch_all_sources(question)

@@ -4,135 +4,187 @@ from typing import List, Dict, Any
 from openai import AsyncOpenAI
 from .models import SourceAnswer, JudgeEvaluation, SourceType
 from .config import config
+from .query_classifier import QueryIntent
 
-JUDGE_SYSTEM_PROMPT = """You are a **Senior Traffic Policy Judge & Fact-Checker** for a government traffic authority chatbot.
+class JudgeLLM:
+    
+    ENHANCED_JUDGE_PROMPT = """You are a Senior Traffic Policy Judge evaluating AI-generated responses.
+
+## CRITICAL NEW METRIC: SCOPE MATCH
+
+Before scoring anything else, determine:
+
+**QUESTION SCOPE:** Is the user asking for:
+- A) ONE specific rule/fine/penalty?
+- B) A COMPREHENSIVE overview/guide/list?
+
+**ANSWER SCOPE:** Does the response provide:
+- A) Information about ONE narrow topic?
+- B) Coverage of MULTIPLE related topics?
+
+### SCOPE MATCH RULES:
+- If Question=BROAD but Answer=NARROW -> MAX SCORE 3/10 (FATAL FLAW!)
+- If Question=SPECIFIC but Answer=BROAD -> Score 7/10 (wastes time but not wrong)
+- If Scope MATCHES -> Proceed to normal scoring (up to 10/10)
 
 ## EVALUATION CRITERIA (Score 1-10 Each):
 
-1. **ACCURACY**: Does it match the Motor Vehicles Act, 1988 and latest 2026 central and state traffic law amendments, rules and policies?
-   - Check: Correct sections? Right fine amounts? Valid penalties?
+### 1. SCOPE ALIGNMENT (NEW - Most Important!)
+- Does answer breadth match question breadth?
+- Did they address ALL parts of multi-part questions?
+- Is the level of detail appropriate?
 
-2. **COMPLETENESS**: Does it cover fines, penalties, exceptions, and safety context?
-   - Required: Direct answer + Legal basis + Fine amount + Exceptions + Safety explanation + Actionable advice
+### 2. ACCURACY
+- Correct sections, fines, penalties per MV Act 1988 + amendments?
 
-3. **CURRENCY**: Is the information up-to-date (2026 rules)?
-   - Check: Mentions recent amendments? Gazette notifications? Current penalty amounts?
+### 3. COMPLETENESS (Relative to Scope!)
+- For BROAD queries: Covered 3+ different rule categories?
+- For SPECIFIC queries: All required elements present?
 
-4. **RELEVANCE**: Does it directly answer the user's question?
-   - Check: No tangential info? Focused response? Addresses all parts of query?
+### 4. CURRENCY
+- Up-to-date (2026 rules)?
 
-5. **SAFETY**: Does it promote safe driving behavior?
-   - Required: Safety reminder at end? No dangerous suggestions? Protective equipment emphasis?
+### 5. RELEVANCE
+- Directly addresses user's actual question?
 
-## CRITICAL RULE: RECURSIVE RESEARCH TRIGGER
-If ANY source scores below 8 on ANY criterion, you MUST output:
-- needs_research: true
-- research_instructions: Specific instructions for EACH failing source on how to improve
+### 6. SAFETY
+- Promotes safe behavior? No dangerous suggestions?
 
 ## OUTPUT FORMAT (STRICT JSON):
+
 {
+  "scope_analysis": {
+    "question_scope": "broad_educational OR specific_rule",
+    "answer_scope": "narrow OR comprehensive",
+    "scope_match": true,
+    "match_score": 10
+  },
   "evaluation": {
-    "db": {"score": 7, "issues": ["..."], "strengths": ["..."]},
-    "ollama": {"score": 6, "issues": ["..."], "strengths": ["..."]},
-    "google": {"score": 8, "issues": ["..."], "strengths": ["..."]}
+    "db": {
+      "score": 8,
+      "criteria_breakdown": {
+        "scope_alignment": 10,
+        "accuracy": 9,
+        "completeness": 8,
+        "currency": 7,
+        "relevance": 9,
+        "safety": 8
+      },
+      "issues": [],
+      "strengths": []
+    },
+    "ollama": { },
+    "google": { }
   },
-  "needs_research": true,
-  "research_instructions": {
-    "db": "...",
-    "ollama": "...",
-    "google": "..."
-  },
+  "needs_research": false,
+  "research_instructions": {},
+  "fatal_flaw_detected": false,
   "max_iterations": 3,
   "current_iteration": 1
-}
-"""
+}"""
 
-class JudgeLLM:
-    """
-    Evaluates answers from all sources using DeepSeek via OpenAI compatible API.
-    Scores each source on 5 criteria (1-10 each)
-    Triggers recursive research if any source < 8
-    """
-    
     def __init__(self):
         self.client = AsyncOpenAI(
             api_key=config.DEEPSEEK_API_KEY,
             base_url=config.DEEPSEEK_BASE_URL
         )
         self.model_name = config.JUDGE_MODEL
-        self.temperature = 0.1  # Low temp for consistent, factual output
+        self.temperature = 0.1
         
     async def evaluate_sources(
-        self, 
-        sources: List[SourceAnswer], 
+        self,
+        sources: List[SourceAnswer],
         user_question: str,
+        query_intent: QueryIntent,
         current_iteration: int = 1
     ) -> Dict[str, Any]:
-        """
-        Evaluate all sources against 5 criteria
-        Return structured JSON with scores and research triggers
-        """
         
-        # Build evaluation prompt with all sources
-        eval_prompt = self._build_evaluation_prompt(sources, user_question, current_iteration)
+        prompt = self._build_enhanced_prompt(
+            sources=sources,
+            question=user_question,
+            intent=query_intent,
+            iteration=current_iteration
+        )
         
-        # Call DeepSeek API
-        response = await self._call_llm(eval_prompt)
+        raw_eval = await self._call_llm(prompt)
         
-        # Parse and validate JSON response
         try:
-            # Clean up potential markdown formatting from JSON response
-            cleaned_response = response.strip()
+            cleaned_response = raw_eval.strip()
             if cleaned_response.startswith("```json"):
                 cleaned_response = cleaned_response[7:]
             if cleaned_response.endswith("```"):
                 cleaned_response = cleaned_response[:-3]
                 
             evaluation = json.loads(cleaned_response)
+            
+            scope_analysis = evaluation.get("scope_analysis", {})
+            if not scope_analysis.get("scope_match", True):
+                print("[ERROR] FATAL: Scope mismatch detected!")
+                print(f"   Question: {scope_analysis.get('question_scope')}")
+                print(f"   Answer: {scope_analysis.get('answer_scope')}")
+                
+                evaluation["needs_research"] = True
+                evaluation["fatal_flaw_detected"] = True
+                evaluation["research_instructions"] = {
+                    "all_sources": f"CRITICAL ERROR: User asked {query_intent.value} query but you provided narrow/single-topic answer. You MUST provide comprehensive multi-topic overview covering ALL relevant aspects."
+                }
+                
+                for source_key, source_data in evaluation.get("evaluation", {}).items():
+                    if isinstance(source_data, dict) and source_data.get("score", 10) > 3:
+                        source_data["score"] = 3
+                        source_data.setdefault("issues", []).append("FATAL: Answer scope doesn't match question scope")
+            
             return self._validate_evaluation(evaluation, current_iteration)
+            
         except json.JSONDecodeError as e:
             print(f"JSON Parsing Error: {e}")
-            print(f"Raw Response: {response}")
             return self._fallback_evaluation(sources, current_iteration)
-    
-    def _build_evaluation_prompt(self, sources, question, iteration):
-        prompt = f"## USER QUESTION:\n{question}\n\n"
+
+    def _build_enhanced_prompt(
+        self,
+        sources: List[SourceAnswer],
+        question: str,
+        intent: QueryIntent,
+        iteration: int
+    ) -> str:
+        prompt = f"## QUERY INTENT (Pre-classified):\n"
+        prompt += f"- Intent Type: **{intent.value}**\n"
+        prompt += f"- Expected Scope: BROAD (multiple topics) OR SPECIFIC (single focused answer)\n\n"
+        
+        prompt += f"## USER QUESTION:\n{question}\n\n"
         prompt += f"## SOURCES TO EVALUATE (Iteration {iteration}):\n\n"
         
-        for source in sources:
-            prompt += f"### {source.source.value.upper()} SOURCE:\n"
-            prompt += f"Answer: {source.answer[:500]}...\n"  # Truncate long answers
-            prompt += f"Confidence: {source.confidence}\n"
-            prompt += f"Metadata: {json.dumps(source.metadata)}\n\n"
+        for idx, source in enumerate(sources, 1):
+            source_type = source.source.value.upper() if hasattr(source, 'source') else "UNKNOWN"
+            prompt += f"### Source {idx}: {source_type}\n"
+            prompt += f"```\n{str(source.answer)[:800]}...\n```\n\n"
         
-        prompt += "\n## PROVIDE YOUR EVALUATION IN THE SPECIFIED JSON FORMAT ONLY. DO NOT ADD ADDITIONAL TEXT."
+        prompt += "\n## EVALUATE NOW (Pay special attention to SCOPE MATCH). Provide STRICT JSON output ONLY.\n"
         return prompt
-    
+        
     async def _call_llm(self, prompt: str) -> str:
         try:
             response = await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+                    {"role": "system", "content": self.ENHANCED_JUDGE_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=self.temperature,
                 max_tokens=2048,
-                response_format={"type": "json_object"} # DeepSeek supports JSON mode
+                response_format={"type": "json_object"}
             )
             return response.choices[0].message.content
         except Exception as e:
             print(f"Error calling DeepSeek Judge API: {e}")
             return "{}"
-    
+
     def _validate_evaluation(self, eval_dict: Dict, current_iteration: int) -> Dict:
-        # Ensure all required fields exist
         if "evaluation" not in eval_dict:
             eval_dict["evaluation"] = {}
         if "needs_research" not in eval_dict:
             eval_dict["needs_research"] = False
             
-        # Determine overall confidence based on minimum score
         scores = [v.get("score", 0) for v in eval_dict.get("evaluation", {}).values() if isinstance(v, dict)]
         min_score = min(scores) if scores else 0
         
@@ -147,7 +199,6 @@ class JudgeLLM:
         return eval_dict
     
     def _fallback_evaluation(self, sources, current_iteration: int):
-        # If LLM fails, return basic scoring fallback
         return {
             "evaluation": {
                 s.source.value: {"score": 5, "issues": ["LLM evaluation failed"], "strengths": []}
