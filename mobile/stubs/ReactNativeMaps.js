@@ -153,9 +153,20 @@ function MapView(props) {
       const type = child.type && (child.type.displayName || child.type.name);
 
       if (type === 'Marker') {
-        const { coordinate, title, description } = child.props;
+        const { coordinate, title, description, pinColor } = child.props;
         if (coordinate && coordinate.latitude && coordinate.longitude) {
-          const marker = L.marker([coordinate.latitude, coordinate.longitude]).addTo(map);
+          const color = pinColor || '#FF3B30';
+          const icon = L.divIcon({
+            className: 'rnm-pin',
+            html: `<svg width="24" height="32" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg">
+                     <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20c0-6.6-5.4-12-12-12z" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+                     <circle cx="12" cy="12" r="5" fill="#fff"/>
+                   </svg>`,
+            iconSize: [24, 32],
+            iconAnchor: [12, 32],
+            popupAnchor: [0, -28],
+          });
+          const marker = L.marker([coordinate.latitude, coordinate.longitude], { icon }).addTo(map);
           if (title || description) {
             marker.bindPopup(`<b>${title || ''}</b>${description ? `<br/>${description}` : ''}`);
           }
