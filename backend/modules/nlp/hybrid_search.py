@@ -82,11 +82,11 @@ class HybridSearch:
                 def __call__(self, input: Documents) -> Embeddings:
                     embeddings = []
                     for text in input:
-                        # 5-second timeout to prevent Uvicorn/Nginx hangs (HTTP 504)
+                        # 15-second timeout to allow the model to load into VRAM on first start
                         response = requests.post(
                             self.url,
                             json={"model": self.model_name, "prompt": text},
-                            timeout=5.0
+                            timeout=15.0
                         )
                         response.raise_for_status()
                         embeddings.append(response.json()["embedding"])
