@@ -19,9 +19,11 @@ export default function TabLayout() {
           tabBarStyle: {
             backgroundColor: '#fff',
             borderTopColor: '#e5e7eb',
-            height: Platform.OS === 'ios' ? 80 + insets.bottom : 65 + insets.bottom,
-            paddingBottom: Platform.OS === 'ios' ? insets.bottom + 5 : insets.bottom + 8,
-            paddingTop: 10,
+            // Content box = height - paddingTop - paddingBottom must fit the
+            // 24px icon + ~16px label. Give it ~54px of room so labels never clip.
+            height: Platform.OS === 'ios' ? 84 + insets.bottom : 72 + insets.bottom,
+            paddingBottom: Platform.OS === 'ios' ? insets.bottom + 6 : insets.bottom + 10,
+            paddingTop: 8,
             elevation: 0,
             shadowOpacity: 0,
           },
@@ -33,7 +35,8 @@ export default function TabLayout() {
           headerShown: false,
           tabBarLabelStyle: {
             fontSize: 11,
-            marginTop: 4,
+            lineHeight: 14,
+            marginTop: 2,
           },
         }}
       >

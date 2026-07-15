@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 # Plain-language offence phrases → offence_code in SQLite
 OFFENCE_ALIASES: dict[str, str] = {
     "no helmet": "NO_HELMET",
@@ -221,12 +223,17 @@ def normalize_state(state: str) -> str:
     return STATE_MAP.get(s, s)
 
 
+def _mentions(alias: str, text: str) -> bool:
+    """Whole-word alias match, so 'us' doesn't match inside 'use'/'must'."""
+    return re.search(r"\b" + re.escape(alias) + r"\b", text) is not None
+
+
 def detect_country(text: str) -> str:
     """Detect country code from user text. Returns ISO 2-letter code or 'IN' default."""
     lower = (text or "").lower()
     # Check longest matches first to avoid 'us' matching inside other words
     for alias in sorted(COUNTRY_ALIASES.keys(), key=len, reverse=True):
-        if alias in lower:
+        if _mentions(alias, lower):
             return COUNTRY_ALIASES[alias]
     return "IN"
 
@@ -239,14 +246,14 @@ def detect_country_and_state(text: str) -> tuple[str, str]:
 
     # Check for specific regions first (these imply both country and state)
     for region in sorted(COUNTRY_STATE_MAP.keys(), key=len, reverse=True):
-        if region in lower:
+        if _mentions(region, lower):
             state = COUNTRY_STATE_MAP[region]
             country = detect_country(region)
             return country, state
 
     # Then check for country-level mentions
     for alias in sorted(COUNTRY_ALIASES.keys(), key=len, reverse=True):
-        if alias in lower:
+        if _mentions(alias, lower):
             country = COUNTRY_ALIASES[alias]
             return country, "ALL"
 
