@@ -612,13 +612,17 @@ class AgentEngine:
         else:
             messages.append({"role": "user", "content": enriched_text})
 
+        # Vision models are much slower to cold-load and run inference on than
+        # text models — 30s is too tight and causes spurious timeout fallbacks.
+        ollama_timeout = 120.0 if image_base64 else 30.0
+
         try:
             for iteration in range(self.MAX_TOOL_ITERATIONS):
                 create_kwargs: Dict[str, Any] = {
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.1,
-                    "timeout": 30.0,
+                    "timeout": ollama_timeout,
                 }
                 if openai_tools:
                     create_kwargs["tools"] = openai_tools
@@ -777,10 +781,11 @@ class AgentEngine:
             error_msg = str(e)
             logger.error(f"[Agent/Ollama] Error: {error_msg}")
 
-            # Try Gemini as fallback
+            # Try Gemini as fallback — must forward the image, or a vision
+            # failure silently degrades into an unrelated text-only answer.
             if self.gemini_available:
                 logger.info("[Agent] Ollama failed. Falling back to Gemini.")
-                return self._run_gemini(user_text, history, gps, None, None)
+                return self._run_gemini(user_text, history, gps, vehicle, location_name, image_base64, image_mime)
 
             fallback = self._keyword_fallback(user_text, gps)
             fallback["error_detail"] = error_msg
