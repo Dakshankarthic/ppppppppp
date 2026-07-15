@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Linking, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface MarkdownRendererProps {
@@ -107,10 +107,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, isA
   };
 
   const renderInline = (text: string, isAI: boolean, inAlert = false) => {
-    // Regex to match **bold**, *italic*, and `code`
-    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`)/g;
+    // Regex to match **bold**, *italic*, `code`, [links](url), and bare https:// URLs
+    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\)|https?:\/\/[^\s]+)/g;
     const parts = text.split(regex);
-    
+
     return parts.map((part, i) => {
       if (part.startsWith('**') && part.endsWith('**')) {
         return (
@@ -130,6 +130,36 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, isA
         return (
           <Text key={i} style={styles.code}>
             {part.slice(1, -1)}
+          </Text>
+        );
+      }
+      
+      const linkMatch = part.match(/^\[(.*?)\]\((.*?)\)$/);
+      if (linkMatch) {
+        const [, label, url] = linkMatch;
+        return (
+          <Text
+            key={i}
+            style={[styles.link, inAlert && styles.alertText]}
+            onPress={() => Linking.openURL(url).catch(() => {})}
+          >
+            {label}
+          </Text>
+        );
+      }
+
+      const bareUrlMatch = part.match(/^(https?:\/\/[^\s]+?)([.,;:!?]?)$/);
+      if (bareUrlMatch) {
+        const [, url, trailingPunct] = bareUrlMatch;
+        return (
+          <Text key={i}>
+            <Text
+              style={[styles.link, inAlert && styles.alertText]}
+              onPress={() => Linking.openURL(url).catch(() => {})}
+            >
+              {url}
+            </Text>
+            {trailingPunct}
           </Text>
         );
       }
@@ -190,6 +220,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderRadius: 4,
     fontSize: 13,
+  },
+  link: {
+    color: '#0284c7',
+    textDecorationLine: 'underline',
   },
   paragraphMargin: {
     marginTop: 8,
