@@ -17,6 +17,12 @@
   status = 200
   force = true
 
+[[redirects]]
+  from = "/challan/*"
+  to = "https://13.222.36.11.nip.io/challan/:splat"
+  status = 200
+  force = true
+
 # Explicit rule for admin dashboard
 [[redirects]]
   from = "/admin/*"

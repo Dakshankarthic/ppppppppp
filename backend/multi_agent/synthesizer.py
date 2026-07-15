@@ -266,7 +266,6 @@ Length: 700-1000 words"""
     async def _synthesize_fallback(self, question, intent, user_country, user_state, history=None, gps=None, vehicle=None):
         prompt = self._build_fallback_prompt(question, user_country, user_state, history, gps, vehicle)
         return await self._call_local_llm(prompt, stream=False, user_country=user_country, user_state=user_state)
-        return await self._call_local_llm(prompt, stream=False, user_country=user_country, user_state=user_state)
 
     async def _create_completion(self, system_prompt: str, prompt: str, stream: bool):
         """Calls DeepSeek with one retry on transient failures (timeouts, rate limits,

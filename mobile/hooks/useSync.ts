@@ -30,6 +30,8 @@ const EMPTY_STATUS: SyncStatus = {
  * so on web this is a no-op — useChallanCalculator falls back to fetching the live endpoint
  * directly instead of going through this local cache.
  */
+let hasWarmedUp = false;
+
 export function useSync() {
   const { replaceAllData, logSync, getSyncStats, clearAllData, initialized } = useLocalDB();
   const [isSyncing, setIsSyncing] = useState(false);
@@ -76,7 +78,8 @@ export function useSync() {
   // Silently warm up the local cache in the background once the DB is ready, mirroring the
   // Tier 3 tiny-model warmup pattern (useSmartChat.ts) for consistency across the app.
   useEffect(() => {
-    if (!initialized || Platform.OS === 'web') return;
+    if (!initialized || Platform.OS === 'web' || hasWarmedUp) return;
+    hasWarmedUp = true;
     refreshStatus().then(() => {
       triggerSync();
     });

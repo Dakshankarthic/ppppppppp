@@ -59,7 +59,7 @@ if IS_PRODUCTION:
     # Restrict CORS in production
     CORS_ORIGINS = [
         "https://drivelegalv1.netlify.app",
-        "https://*.onrender.com",
+        "https://drivelegal-web.onrender.com",
         # Add your own custom domain here if you have one
     ]
     print(f"Running in PRODUCTION mode. CORS restricted to: {CORS_ORIGINS}")

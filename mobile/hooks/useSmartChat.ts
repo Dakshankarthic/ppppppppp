@@ -9,13 +9,16 @@ import type { ChatHistoryTurn, QueryResult } from './useQuery';
 export type Tier = 'cloud' | 'tiny' | 'offline';
 export type TinyModelStatus = 'idle' | 'downloading' | 'ready' | 'error';
 
-const OFFLINE_NO_MODEL_MESSAGE =
+const OFFLINE_NO_MODEL_MESSAGE_WEB =
   "You're offline and the cloud AI can't be reached right now. I can't look anything up until " +
   "one of those comes back — please check your connection and try again.";
 
-const OFFLINE_MODEL_WARMING_MESSAGE =
+const OFFLINE_MODEL_WARMING_MESSAGE_WEB =
   "You're offline and the cloud AI can't be reached right now. The on-device assistant is " +
   'still downloading in the background — give it a moment and try again.';
+
+const OFFLINE_MESSAGE_NATIVE =
+  "You're offline and the cloud AI can't be reached right now. Please check your connection and try again.";
 
 interface UseSmartChatResult {
   data: QueryResult | null;
@@ -81,8 +84,10 @@ export function useSmartChat(): UseSmartChatResult {
   const runOfflineFallback = useCallback(() => {
     setTier('offline');
     setIsOffline(true);
-    const message =
-      tinyModelStatusRef.current === 'downloading' ? OFFLINE_MODEL_WARMING_MESSAGE : OFFLINE_NO_MODEL_MESSAGE;
+    let message = OFFLINE_MESSAGE_NATIVE;
+    if (Platform.OS === 'web') {
+      message = tinyModelStatusRef.current === 'downloading' ? OFFLINE_MODEL_WARMING_MESSAGE_WEB : OFFLINE_NO_MODEL_MESSAGE_WEB;
+    }
     setData({ status: 'ok', response: message, citations: [] });
   }, []);
 

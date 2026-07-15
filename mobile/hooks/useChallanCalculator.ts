@@ -4,6 +4,7 @@ import * as Location from 'expo-location';
 import { useLocalDB } from './useLocalDB';
 import { getApiBaseUrl } from '../lib/api';
 import { checkCloudAvailable } from '../lib/tiers/smartSwitch';
+import { useSync } from './useSync';
 
 // Mirrors backend/modules/agent/normalize.py's STATE_MAP — GPS reverse-geocoding gives a full
 // region name ("Tamil Nadu"), but fines.db keys on the short code ("TN").
@@ -227,6 +228,7 @@ function filterForJurisdiction(all: Violation[], state: string, country: string)
 
 export function useChallanCalculator() {
   const { getAllFines, getZonesForPoint, initialized } = useLocalDB();
+  const { isSyncing } = useSync();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState('ALL');
@@ -327,7 +329,7 @@ export function useChallanCalculator() {
       const jurisdictionFines = filterForJurisdiction(webViolationsCache, detectedState, detectedCountry);
       setViolations(jurisdictionFines.length > 0 ? jurisdictionFines : webViolationsCache);
     } else {
-      setError('No jurisdiction data available yet — connect once to enable this offline.');
+      setError('No jurisdiction data available yet — connect once to enable offline cache for this session.');
       setViolations([]);
     }
     setLoading(false);
@@ -368,6 +370,13 @@ export function useChallanCalculator() {
     loadJurisdiction();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized]);
+
+  // If sync just finished and we have an empty dataset, re-fetch from the local DB.
+  useEffect(() => {
+    if (Platform.OS !== 'web' && initialized && !isSyncing && allViolations.length === 0) {
+      loadJurisdiction();
+    }
+  }, [isSyncing, initialized, allViolations.length, loadJurisdiction]);
 
   // Vehicle-agnostic fines (vehicle_class='ALL' — drunk driving, no license, etc.) apply no
   // matter which vehicle type is selected, so they're excluded from the pickable list itself
