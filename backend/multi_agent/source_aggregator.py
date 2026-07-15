@@ -66,7 +66,7 @@ class SourceAggregator:
                 )
             
             if intent == QueryIntent.BROAD_EDUCATIONAL:
-                categories = metadata.get('categories_needed', [])
+                categories = metadata.get('categories', metadata.get('categories_needed', []))
                 for cat in categories:
                     if self.rules_loader:
                         db_results.append(f"Category {cat}: Refer to MV Act for {cat} rules.")
@@ -88,7 +88,7 @@ class SourceAggregator:
     async def _fetch_from_ollama(self, question: str, intent: QueryIntent, metadata: dict) -> SourceAnswer:
         try:
             if intent == QueryIntent.BROAD_EDUCATIONAL:
-                cats = metadata.get('categories_needed', [])
+                cats = metadata.get('categories', metadata.get('categories_needed', []))
                 system_prompt = f"Provide a comprehensive overview of traffic rules for: {', '.join(cats)}."
             else:
                 system_prompt = "You are a traffic law expert. Answer the specific question directly."
@@ -122,7 +122,9 @@ class SourceAggregator:
         try:
             query = question
             if intent == QueryIntent.BROAD_EDUCATIONAL:
-                query = f"India traffic rules comprehensive guide {metadata.get('categories_needed', [''])[0]}"
+                cats = metadata.get('categories', metadata.get('categories_needed', ['']))
+                first_cat = cats[0] if cats else ''
+                query = f"India traffic rules comprehensive guide {first_cat}"
                 
             if not config.SERPER_API_KEY:
                 print("[WARN] SERPER_API_KEY not found. Please add it to your .env file to enable enterprise search.")
