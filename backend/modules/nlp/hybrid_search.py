@@ -82,11 +82,11 @@ class HybridSearch:
                 def __call__(self, input: Documents) -> Embeddings:
                     embeddings = []
                     for text in input:
-                        # 15-second timeout to allow the model to load into VRAM on first start
+                        # 60-second timeout to allow the model to load into VRAM on first start
                         response = requests.post(
                             self.url,
                             json={"model": self.model_name, "prompt": text},
-                            timeout=15.0
+                            timeout=60.0
                         )
                         response.raise_for_status()
                         embeddings.append(response.json()["embedding"])
