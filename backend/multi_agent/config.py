@@ -11,7 +11,8 @@ class Config(BaseModel):
     SYNTHESIZER_MODEL: str = "deepseek-chat"
     
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
-    OLLAMA_MODEL: str = "gemma:2b"
+    OLLAMA_MODEL: str = "gemma2:9b"
+    OLLAMA_VISION_MODEL: str = "llama3.2-vision:latest"
     
     SERPER_API_KEY: str = os.getenv("SERPER_API_KEY", "")
     
