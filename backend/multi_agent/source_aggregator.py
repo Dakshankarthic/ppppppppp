@@ -41,7 +41,6 @@ _STOPWORDS = {
     "indian", "rule", "rules", "law", "laws", "fine", "fines", "penalty",
 }
 
-
 class SourceAggregator:
     
     def __init__(self, fine_lookup=None, rules_loader=None):
@@ -54,13 +53,13 @@ class SourceAggregator:
             base_url=config.OLLAMA_BASE_URL
         )
     
-    async def fetch_all_sources(self, user_question: str) -> List[SourceAnswer]:
+    async def fetch_all_sources(self, user_question: str, user_state: str = None) -> List[SourceAnswer]:
         intent, metadata = self.classifier.classify(user_question)
         print(f"\n[INFO] Query Classified: {intent.value}")
         print(f"[INFO] Scope: {metadata['scope']}")
         
         tasks = [
-            self._fetch_from_db(user_question, intent, metadata),
+            self._fetch_from_db(user_question, intent, metadata, user_state),
             self._fetch_from_ollama(user_question, intent, metadata),
             self._fetch_from_google(user_question, intent, metadata)
         ]
@@ -76,7 +75,7 @@ class SourceAggregator:
                 
         return valid_results
     
-    async def _fetch_from_db(self, question: str, intent: QueryIntent, metadata: dict) -> SourceAnswer:
+    async def _fetch_from_db(self, question: str, intent: QueryIntent, metadata: dict, user_state: str = None) -> SourceAnswer:
         """Ground the answer in the local fines.db + rules.json.
 
         Runs the (synchronous, SQLite) lookups in a worker thread so the
@@ -91,12 +90,14 @@ class SourceAggregator:
                     metadata={"error": "no_db_client"},
                 )
 
-            return await asyncio.to_thread(self._query_local_db, question, intent, metadata)
+            return await asyncio.to_thread(self._query_local_db, question, intent, metadata, user_state)
         except Exception as e:
             return SourceAnswer(source=SourceType.DB, answer=str(e), confidence=0.0, metadata={"error": str(e)})
 
-    def _query_local_db(self, question: str, intent: QueryIntent, metadata: dict) -> SourceAnswer:
+    def _query_local_db(self, question: str, intent: QueryIntent, metadata: dict, user_state: str = None) -> SourceAnswer:
         country, state = detect_country_and_state(question)
+        if state == "unknown" and user_state:
+            state = user_state
         symbol = get_currency_symbol(country)
 
         # 1. Which offences does the question actually mention?

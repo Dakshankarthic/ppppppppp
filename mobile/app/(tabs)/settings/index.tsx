@@ -330,7 +330,13 @@ export default function ProfileScreen() {
               iconBg="#DCFCE7"
               iconColor="#15803D"
               label={t('offline_pack')}
-              value={isSyncing ? 'Syncing...' : `${syncStatus.lastSync.rules} refresh`}
+              value={
+                isSyncing
+                  ? 'Syncing...'
+                  : syncStatus.lastSync.rules
+                  ? `${syncStatus.lastSync.rules.split('T')[0]} refresh`
+                  : 'Not synced yet'
+              }
               valueColor="#D97706"
               onPress={() => triggerSync()}
             />

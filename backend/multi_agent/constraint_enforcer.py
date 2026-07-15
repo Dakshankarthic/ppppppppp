@@ -75,3 +75,30 @@ class ConstraintEnforcer:
                         fixed += "\n*(Note: Fine capped at legal maximum)*"
         
         return fixed
+
+def check_required_fields(answer: str, sources: List[Any], intent) -> Tuple[bool, List[str], str]:
+    """
+    Ensure the synthesized answer hasn't dropped critical DB fields (fine amounts, sections).
+    """
+    if getattr(intent, 'value', intent) != "specific_rule":
+        return True, [], answer
+        
+    db_sources = [str(s.answer) for s in sources if getattr(s.source, 'value', str(s.source)) == 'db']
+    db_text = "\n".join(db_sources).lower()
+    
+    missing_fields = []
+    
+    if "₹" in db_text or "rs." in db_text or "rupees" in db_text or "raw_fine_data" in db_text:
+        if not re.search(r'(₹|rs\.?|rupees?|\d{2,})', answer.lower()):
+            missing_fields.append("Fine Amount")
+            
+    if "section" in db_text or "raw_fine_data" in db_text:
+        if "section" not in answer.lower() and "sec." not in answer.lower():
+            missing_fields.append("Legal Section")
+            
+    if missing_fields:
+        fields_str = " and ".join(missing_fields)
+        fixed_answer = answer + f"\n\n*(Note: According to our database, this rule involves a specific {fields_str} which was omitted in the summary. Please check your local RTO or the original data sources for the exact figures and sections.)*"
+        return False, missing_fields, fixed_answer
+        
+    return True, [], answer

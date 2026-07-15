@@ -59,22 +59,30 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, isA
   const renderParagraphs = (text: string, isAI: boolean, inAlert = false) => {
     const paragraphs = text.split(/\n\n+/);
     return paragraphs.map((p, idx) => {
-      const isListItem = /^\s*[-*]\s+/.test(p) || /^\d+\.\s+/.test(p);
+      const isListItem = /^\s*([-*•]|\d+\.)\s+/.test(p);
       
       if (isListItem) {
         const items = p.split(/\n/);
         return (
           <View key={`p-${idx}`} style={styles.listContainer}>
             {items.map((item, i) => {
-              const cleanItem = item.replace(/^\s*[-*]\s+/, '').replace(/^\d+\.\s+/, '');
+              const match = item.match(/^(\s*)([-*•]|\d+\.)\s+/);
+              const indent = match ? match[1].length * 8 : 0;
+              const cleanItem = match ? item.substring(match[0].length) : item;
+              
               if (!item.trim()) return null;
               return (
-                <View key={`li-${i}`} style={styles.listItem}>
-                  <Text style={[styles.bullet, { color: isAI ? '#1c1c1c' : '#fff' }]}>•</Text>
+                <View key={`li-${i}`} style={[styles.listItem, { marginLeft: indent }]}>
+                  {match ? (
+                    <Text style={[styles.bullet, { color: isAI ? '#1c1c1c' : '#fff' }]}>•</Text>
+                  ) : (
+                    <Text style={[styles.bullet, { color: 'transparent' }]}>•</Text>
+                  )}
                   <Text style={[
                     styles.text, 
                     isAI ? styles.aiText : styles.userText,
-                    inAlert && styles.alertText
+                    inAlert && styles.alertText,
+                    { flex: 1 }
                   ]}>
                     {renderInline(cleanItem, isAI, inAlert)}
                   </Text>

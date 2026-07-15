@@ -1,5 +1,6 @@
 import re
 from typing import Tuple, Dict, List
+from backend.multi_agent.history_utils import is_follow_up_question, history_transcript
 
 class EnhancedQueryClassifier:
     """
@@ -44,7 +45,7 @@ class EnhancedQueryClassifier:
         "singapore": ["singapore", "sg"]
     }
     
-    def classify(self, user_question: str) -> Dict[str, any]:
+    def classify(self, user_question: str, history: List[Dict] = None) -> Dict[str, any]:
         """
         Classify query with better edge case handling
         """
@@ -62,6 +63,10 @@ class EnhancedQueryClassifier:
                 "_should_respond": False
             }
         
+        context_text = question_lower
+        if history and is_follow_up_question(user_question, history):
+            context_text = f"{history_transcript(history, max_turns=4).lower()} {question_lower}"
+            
         # Check for broad educational queries
         broad_score = sum(1 for kw in self.BROAD_PATTERNS if kw in question_lower)
         specific_score = sum(1 for kw in self.SPECIFIC_PATTERNS if kw in question_lower)
@@ -69,12 +74,12 @@ class EnhancedQueryClassifier:
         # Determine intent
         if broad_score > 0 and broad_score >= specific_score:
             intent_type = "broad_edu"
-            categories = self._extract_categories(question_lower)
+            categories = self._extract_categories(context_text)
             fetch_strategy = "multi_topic"
             
-        elif specific_score > 0:
+        elif specific_score > 0 or (history and is_follow_up_question(user_question, history)):
             intent_type = "specific_rule"
-            categories = [self._detect_single_topic(question_lower)]
+            categories = [self._detect_single_topic(context_text)]
             fetch_strategy = "single_topic"
             
         else:
@@ -84,7 +89,7 @@ class EnhancedQueryClassifier:
             fetch_strategy = "multi_topic"
         
         # Extract Country Jurisdiction
-        detected_country = self._extract_country(question_lower)
+        detected_country = self._extract_country(context_text)
         
         return {
             "intent_type": intent_type,

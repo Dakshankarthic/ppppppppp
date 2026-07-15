@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
   TouchableOpacity,
   Platform,
   TextInput,
   ActivityIndicator,
   Alert,
-  Modal
+  Modal,
+  Animated
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -17,6 +18,15 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { getApiBaseUrl } from '../../lib/api';
 import { useSettings } from '../../hooks/useSettings';
+import {
+  useChallanCalculator,
+  labelForOffence,
+  labelForVehicleClass,
+  labelForCountry,
+  labelForState,
+  formatAmount,
+  ChallanResult,
+} from '../../hooks/useChallanCalculator';
 import { CATEGORY_DETAILS } from './zones/index';
 
 interface Challan {
@@ -39,6 +49,14 @@ interface VehicleResult {
   message?: string;
 }
 
+const VEHICLE_ICONS: Record<string, React.ComponentProps<typeof MaterialCommunityIcons>['name']> = {
+  TWO_WHEELER: 'motorbike',
+  THREE_WHEELER: 'rickshaw',
+  LMV: 'car-outline',
+  HGV: 'truck-outline',
+  COMMERCIAL: 'truck-delivery-outline',
+};
+
 export default function FinesScreen() {
   const router = useRouter();
   const { t } = useSettings();
@@ -50,25 +68,105 @@ export default function FinesScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [expandedAct, setExpandedAct] = useState<string | null>(null);
 
-  const [ruleSearch, setRuleSearch] = useState('');
-  const [allRules, setAllRules] = useState<any[]>([]);
+  const challan = useChallanCalculator();
+  const [violationPickerVisible, setViolationPickerVisible] = useState(false);
+  const [countryPickerVisible, setCountryPickerVisible] = useState(false);
+  const [statePickerVisible, setStatePickerVisible] = useState(false);
+  const [pendingCountry, setPendingCountry] = useState<string | null>(null);
+  const [selectedVehicleClass, setSelectedVehicleClass] = useState<string | null>(null);
+  const [selectedOffenceCode, setSelectedOffenceCode] = useState<string | null>(null);
+  const [challanResult, setChallanResult] = useState<ChallanResult | null>(null);
 
-  React.useEffect(() => {
-    const rules: any[] = [];
-    Object.keys(CATEGORY_DETAILS).forEach(cat => {
-      CATEGORY_DETAILS[cat].acts.forEach(act => {
-        rules.push({ ...act, category: cat });
-      });
-    });
-    setAllRules(rules);
-  }, []);
+  // Some jurisdictions' fine schedules genuinely don't differentiate by vehicle type (every
+  // fine is filed as vehicle_class='ALL') — forcing a vehicle-type choice there would be fake
+  // precision, so that step is skipped entirely rather than shown with one meaningless option.
+  const needsVehicleStep = challan.vehicleClasses.length > 0;
+  const effectiveVehicleClass = needsVehicleStep ? selectedVehicleClass : null;
+  const vehicleStepDone = !needsVehicleStep || !!selectedVehicleClass;
 
-  const filteredRules = ruleSearch.length > 2 
-    ? allRules.filter(r => 
-        r.act.toLowerCase().includes(ruleSearch.toLowerCase()) || 
-        r.penalty.toLowerCase().includes(ruleSearch.toLowerCase())
-      )
-    : [];
+  const resultAnim = useRef(new Animated.Value(0)).current;
+  const violationStepAnim = useRef(new Animated.Value(0)).current;
+  const radarAnim = useRef(new Animated.Value(0)).current;
+  const [calculating, setCalculating] = useState(false);
+  const [lawsBanner, setLawsBanner] = useState<'hidden' | 'loading' | 'applied'>('hidden');
+  const lawsBannerAnim = useRef(new Animated.Value(0)).current;
+  const jurisdictionShortName = challan.locationLabel.split(',')[0]?.trim() || labelForCountry(challan.country);
+
+  useEffect(() => {
+    Animated.spring(violationStepAnim, {
+      toValue: vehicleStepDone ? 1 : 0,
+      useNativeDriver: true,
+      friction: 8,
+    }).start();
+  }, [vehicleStepDone, violationStepAnim]);
+
+  // Pulsing radar while the geofence is still resolving ("Detecting location...").
+  useEffect(() => {
+    if (!challan.loading) {
+      radarAnim.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(radarAnim, { toValue: 1, duration: 650, useNativeDriver: true }),
+        Animated.timing(radarAnim, { toValue: 0, duration: 650, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [challan.loading, radarAnim]);
+
+  // Once the geofence locks in, briefly show "Loading X laws..." then "X laws applied" —
+  // makes the background sync feel like a deliberate, visible step instead of instant magic.
+  useEffect(() => {
+    if (challan.loading) {
+      setLawsBanner('hidden');
+      return;
+    }
+    setLawsBanner('loading');
+    lawsBannerAnim.setValue(1);
+    const showApplied = setTimeout(() => setLawsBanner('applied'), 500);
+    const hide = setTimeout(() => {
+      Animated.timing(lawsBannerAnim, { toValue: 0, duration: 400, useNativeDriver: true }).start(() =>
+        setLawsBanner('hidden')
+      );
+    }, 2200);
+    return () => {
+      clearTimeout(showApplied);
+      clearTimeout(hide);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challan.loading, challan.state, challan.country]);
+
+  const handleCalculateFine = () => {
+    if (!vehicleStepDone || !selectedOffenceCode || calculating) return;
+    setCalculating(true);
+    setChallanResult(null);
+    setTimeout(() => {
+      const result = challan.calculate(selectedOffenceCode, effectiveVehicleClass, false);
+      setChallanResult(result);
+      setCalculating(false);
+      resultAnim.setValue(0);
+      Animated.spring(resultAnim, { toValue: 1, useNativeDriver: true, friction: 7 }).start();
+    }, 1000);
+  };
+
+  const handlePickCountry = (countryCode: string) => {
+    setPendingCountry(countryCode);
+    setCountryPickerVisible(false);
+    setStatePickerVisible(true);
+  };
+
+  const handlePickState = (stateCode: string) => {
+    if (pendingCountry) {
+      challan.setJurisdiction(stateCode, pendingCountry);
+      setSelectedVehicleClass(null);
+      setSelectedOffenceCode(null);
+      setChallanResult(null);
+    }
+    setStatePickerVisible(false);
+    setPendingCountry(null);
+  };
 
   const handleOpenCategory = (catName: string) => {
     setSelectedCategory(catName);
@@ -316,44 +414,211 @@ export default function FinesScreen() {
           <Text style={styles.rulesSectionTitle}>Calculate Penalty</Text>
         </View>
 
-        {/* Calculate Penalty Search */}
-        <View style={styles.searchCard}>
-          <Text style={styles.inputLabel}>SEARCH BY VIOLATION NAME</Text>
-          <View style={styles.inputWrapper}>
-            <Ionicons name="search" size={20} color="#6b7280" style={styles.inputIcon} />
-            <TextInput
-              style={[
-                styles.input,
-                Platform.OS === 'web' && { outlineStyle: 'none' } as any
-              ]}
-              placeholder="e.g. Helmet, Speed, Red Light..."
-              placeholderTextColor="#9ca3af"
-              value={ruleSearch}
-              onChangeText={setRuleSearch}
-              autoCorrect={false}
-            />
-            {ruleSearch.length > 0 && (
-              <TouchableOpacity onPress={() => setRuleSearch('')} style={{ marginRight: 8 }}>
-                <Ionicons name="close-circle" size={18} color="#9ca3af" />
-              </TouchableOpacity>
-            )}
+        {/* Global Challan Calculator */}
+        <View style={styles.calculatorCard}>
+          <View style={styles.jurisdictionRow}>
+            <View style={styles.jurisdictionPin}>
+              {challan.loading ? (
+                <Animated.View
+                  style={{
+                    opacity: radarAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
+                    transform: [{ scale: radarAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.2] }) }],
+                  }}
+                >
+                  <Ionicons name="radio-outline" size={16} color="#d97706" />
+                </Animated.View>
+              ) : (
+                <Ionicons name="location" size={16} color="#d97706" />
+              )}
+            </View>
+            <Text style={styles.jurisdictionText} numberOfLines={1}>
+              {challan.loading
+                ? 'Detecting location…'
+                : `${challan.isManualJurisdiction ? 'Jurisdiction selected' : 'Geofence locked'}: ${challan.locationLabel}`}
+            </Text>
+            <TouchableOpacity
+              style={styles.jurisdictionChangeButton}
+              onPress={() => setCountryPickerVisible(true)}
+              accessibilityLabel="Check a different country or state"
+            >
+              <Text style={styles.jurisdictionChangeText}>Change</Text>
+            </TouchableOpacity>
           </View>
 
-          {ruleSearch.length > 2 && filteredRules.length > 0 && (
-            <View style={styles.ruleResults}>
-              {filteredRules.map((item, idx) => (
-                <View key={idx} style={styles.ruleItem}>
-                  <View style={styles.ruleItemHeader}>
-                    <Text style={styles.ruleActText}>{item.act}</Text>
-                    <Text style={styles.rulePenaltyText}>{item.penalty}</Text>
-                  </View>
-                  <Text style={styles.ruleCategoryText}>Category: {item.category}</Text>
+          {lawsBanner !== 'hidden' && (
+            <Animated.View style={[styles.lawsAppliedBanner, { opacity: lawsBannerAnim }]}>
+              {lawsBanner === 'loading' ? (
+                <>
+                  <ActivityIndicator size="small" color="#d97706" />
+                  <Text style={styles.lawsAppliedText}>Loading {jurisdictionShortName} laws…</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="checkmark-circle" size={16} color="#16a34a" />
+                  <Text style={styles.lawsAppliedText}>{jurisdictionShortName} laws applied</Text>
+                </>
+              )}
+            </Animated.View>
+          )}
+
+          {challan.zones.length > 0 && (
+            <View style={styles.zoneChipRow}>
+              {challan.zones.map((z) => (
+                <View key={z.zone_id} style={styles.zoneChip}>
+                  <Text style={styles.zoneChipText}>
+                    {z.zone_type.replace(/_/g, ' ')}{z.fine_multiplier > 1 ? ` · ${z.fine_multiplier}x fine` : ''}
+                  </Text>
                 </View>
               ))}
             </View>
           )}
-          {ruleSearch.length > 2 && filteredRules.length === 0 && (
-            <Text style={{ marginTop: 8, color: '#6b7280', fontSize: 13, textAlign: 'center' }}>No matching violations found.</Text>
+
+          {challan.isOffline && (
+            <View style={styles.challanOfflineBanner}>
+              <Ionicons name="cloud-offline-outline" size={14} color="#92400e" />
+              <Text style={styles.challanOfflineText}>
+                Offline — showing the last synced fine data{Platform.OS === 'web' ? ' from this session' : ''}.
+              </Text>
+            </View>
+          )}
+
+          {challan.loading ? (
+            <View style={styles.loaderContainer}>
+              <ActivityIndicator size="small" color="#d97706" />
+              <Text style={styles.loaderText}>Finding your jurisdiction…</Text>
+            </View>
+          ) : challan.error ? (
+            <Text style={{ marginTop: 8, color: '#6b7280', fontSize: 13, textAlign: 'center' }}>{challan.error}</Text>
+          ) : (
+            <>
+              {needsVehicleStep && (
+                <View style={styles.calcStep}>
+                  <View style={styles.calcStepHeader}>
+                    <View style={[styles.stepBadge, styles.stepBadgeActive]}>
+                      <Text style={styles.stepBadgeText}>1</Text>
+                    </View>
+                    <Text style={styles.calcStepLabel}>VEHICLE TYPE</Text>
+                  </View>
+                  <View style={styles.vehicleChipRow}>
+                    {challan.vehicleClasses.map((vc) => {
+                      const active = selectedVehicleClass === vc;
+                      return (
+                        <TouchableOpacity
+                          key={vc}
+                          style={[styles.vehicleChip, active && styles.vehicleChipActive]}
+                          onPress={() => {
+                            setSelectedVehicleClass(vc);
+                            setSelectedOffenceCode(null);
+                            setChallanResult(null);
+                          }}
+                          accessibilityLabel={`Vehicle type: ${labelForVehicleClass(vc)}`}
+                        >
+                          <MaterialCommunityIcons
+                            name={VEHICLE_ICONS[vc] || 'car-outline'}
+                            size={22}
+                            color={active ? '#fff' : '#d97706'}
+                          />
+                          <Text style={[styles.vehicleChipText, active && styles.vehicleChipTextActive]}>
+                            {labelForVehicleClass(vc)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              <Animated.View
+                style={[
+                  styles.calcStep,
+                  {
+                    opacity: violationStepAnim,
+                    pointerEvents: vehicleStepDone ? 'auto' : 'none',
+                    transform: [
+                      { translateY: violationStepAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+                    ],
+                  },
+                ]}
+              >
+                <View style={styles.calcStepHeader}>
+                  <View style={[styles.stepBadge, vehicleStepDone && styles.stepBadgeActive]}>
+                    <Text style={styles.stepBadgeText}>{needsVehicleStep ? 2 : 1}</Text>
+                  </View>
+                  <Text style={styles.calcStepLabel}>VIOLATION TYPE</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.violationPickerButton}
+                  onPress={() => vehicleStepDone && setViolationPickerVisible(true)}
+                  disabled={!vehicleStepDone}
+                  accessibilityLabel="Select violation type"
+                >
+                  <View style={styles.violationPickerIcon}>
+                    <Ionicons name="warning-outline" size={18} color="#d97706" />
+                  </View>
+                  <Text
+                    style={[
+                      styles.violationPickerText,
+                      !selectedOffenceCode && styles.violationPickerPlaceholder,
+                    ]}
+                  >
+                    {selectedOffenceCode ? labelForOffence(selectedOffenceCode) : 'Tap to choose a violation'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+                </TouchableOpacity>
+              </Animated.View>
+
+              <TouchableOpacity
+                style={[
+                  styles.searchButton,
+                  { marginTop: 16 },
+                  (!vehicleStepDone || !selectedOffenceCode || calculating) && styles.searchButtonDisabled,
+                ]}
+                onPress={handleCalculateFine}
+                disabled={!vehicleStepDone || !selectedOffenceCode || calculating}
+                accessibilityLabel="Calculate fine"
+              >
+                {calculating ? (
+                  <>
+                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.searchButtonText}>Calculating…</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="calculator" size={16} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.searchButtonText}>Calculate Fine</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {challanResult && (
+                <Animated.View
+                  style={[
+                    styles.challanResultCard,
+                    {
+                      opacity: resultAnim,
+                      transform: [
+                        { translateY: resultAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) },
+                      ],
+                    },
+                  ]}
+                >
+                  <View style={styles.challanResultIconWrap}>
+                    <Ionicons name="receipt-outline" size={20} color="#d97706" />
+                  </View>
+                  <Text style={styles.challanAmountText}>
+                    {formatAmount(challanResult.amount, challanResult.currency)}
+                  </Text>
+                  {challanResult.sectionRef && (
+                    <Text style={styles.challanSectionText}>Legal Reference: {challanResult.sectionRef}</Text>
+                  )}
+                  {challanResult.zoneMultiplier > 1 && (
+                    <Text style={styles.challanZoneNote}>
+                      Includes {challanResult.zoneMultiplier}x zone multiplier ({formatAmount(challanResult.baseAmount, challanResult.currency)} base fine)
+                    </Text>
+                  )}
+                </Animated.View>
+              )}
+            </>
           )}
         </View>
 
@@ -568,6 +833,97 @@ export default function FinesScreen() {
                 </ScrollView>
               </>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Violation Type Picker */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={violationPickerVisible}
+        onRequestClose={() => setViolationPickerVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Violation Type</Text>
+              <TouchableOpacity onPress={() => setViolationPickerVisible(false)}>
+                <Ionicons name="close" size={24} color="#1f2937" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
+              {challan.offencesFor(effectiveVehicleClass).map((v) => (
+                <TouchableOpacity
+                  key={v.offence_code}
+                  style={styles.pickerRow}
+                  onPress={() => {
+                    setSelectedOffenceCode(v.offence_code);
+                    setChallanResult(null);
+                    setViolationPickerVisible(false);
+                  }}
+                >
+                  <Text style={styles.pickerRowText}>{labelForOffence(v.offence_code)}</Text>
+                  {selectedOffenceCode === v.offence_code && <Ionicons name="checkmark" size={18} color="#d97706" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Country Picker (manual jurisdiction override, step 1) */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={countryPickerVisible}
+        onRequestClose={() => setCountryPickerVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Country</Text>
+              <TouchableOpacity onPress={() => setCountryPickerVisible(false)}>
+                <Ionicons name="close" size={24} color="#1f2937" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
+              {challan.availableCountries.map((c) => (
+                <TouchableOpacity key={c} style={styles.pickerRow} onPress={() => handlePickCountry(c)}>
+                  <Text style={styles.pickerRowText}>{labelForCountry(c)}</Text>
+                  {challan.country === c && <Ionicons name="checkmark" size={18} color="#d97706" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* State Picker (manual jurisdiction override, step 2) */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={statePickerVisible}
+        onRequestClose={() => setStatePickerVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                Select State{pendingCountry ? ` — ${labelForCountry(pendingCountry)}` : ''}
+              </Text>
+              <TouchableOpacity onPress={() => setStatePickerVisible(false)}>
+                <Ionicons name="close" size={24} color="#1f2937" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
+              {pendingCountry &&
+                challan.availableStatesFor(pendingCountry).map((s) => (
+                  <TouchableOpacity key={s} style={styles.pickerRow} onPress={() => handlePickState(s)}>
+                    <Text style={styles.pickerRowText}>{labelForState(s)}</Text>
+                  </TouchableOpacity>
+                ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1054,39 +1410,227 @@ const styles = StyleSheet.create({
     color: '#4B5563',
     lineHeight: 18,
   },
-  ruleResults: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f0ea',
-    paddingTop: 8,
+  jurisdictionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  ruleItem: {
-    paddingVertical: 12,
+  jurisdictionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  jurisdictionChangeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#d97706',
+  },
+  zoneChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  zoneChip: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  zoneChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#b45309',
+    textTransform: 'capitalize',
+  },
+  challanOfflineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    padding: 8,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 8,
+  },
+  challanOfflineText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#92400e',
+    fontWeight: '500',
+  },
+  challanResultCard: {
+    marginTop: 16,
+    padding: 16,
+    backgroundColor: '#fffbeb',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    alignItems: 'center',
+  },
+  challanAmountText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#d97706',
+  },
+  challanSectionText: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400e',
+  },
+  challanZoneNote: {
+    marginTop: 6,
+    fontSize: 11,
+    color: '#92400e',
+    textAlign: 'center',
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f0ea',
   },
-  ruleItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 6,
-  },
-  ruleActText: {
+  pickerRowText: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#1f2937',
-    flex: 1,
   },
-  rulePenaltyText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ef4444',
-    marginLeft: 12,
-    flexShrink: 0,
+  calculatorCard: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#f3f0ea',
+    shadowColor: '#d97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 3,
   },
-  ruleCategoryText: {
+  jurisdictionPin: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#fef3c7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  jurisdictionChangeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: '#fef3c7',
+  },
+  calcStep: {
+    marginTop: 18,
+  },
+  calcStepHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  stepBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeActive: {
+    backgroundColor: '#d97706',
+  },
+  stepBadgeText: {
     fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  calcStepLabel: {
+    fontSize: 12,
+    fontWeight: '700',
     color: '#6b7280',
-    fontWeight: '500',
+    letterSpacing: 0.5,
+  },
+  vehicleChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  vehicleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#fde68a',
+    backgroundColor: '#fffbeb',
+  },
+  vehicleChipActive: {
+    backgroundColor: '#d97706',
+    borderColor: '#d97706',
+  },
+  vehicleChipText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400e',
+  },
+  vehicleChipTextActive: {
+    color: '#fff',
+  },
+  violationPickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  violationPickerIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#fef3c7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  violationPickerText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  violationPickerPlaceholder: {
+    color: '#9ca3af',
+    fontWeight: '400',
+  },
+  challanResultIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fef3c7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  lawsAppliedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  lawsAppliedText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
   },
 });

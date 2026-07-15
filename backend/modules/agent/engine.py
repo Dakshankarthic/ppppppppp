@@ -37,6 +37,8 @@ import re
 import logging
 from typing import Any, Dict, List, Optional
 
+from backend.multi_agent.history_utils import clean_user_text, message_needs_location, history_transcript, history_has_traffic_context, is_follow_up_question
+
 from backend.modules.agent.tools import ToolExecutor, TOOL_DEFINITIONS
 
 logger = logging.getLogger(__name__)
@@ -275,7 +277,7 @@ class AgentEngine:
         image_base64: Optional[str] = None,
         image_mime: str = "image/jpeg",
     ) -> Dict[str, Any]:
-        clean_text = self._clean_user_text(user_text)
+        clean_text = clean_user_text(user_text)
         if not image_base64:
             conversational = (
                 self._try_conversational_response(clean_text)
@@ -323,99 +325,13 @@ class AgentEngine:
         vision_markers = ("vision", "llava")
         return any(marker in model for marker in vision_markers)
 
-    def _clean_user_text(self, text: str) -> str:
-        t = (text or "").strip().lower()
-        t = re.sub(r"[!?.。,;:]+$", "", t)
-        t = re.sub(r"\s+", " ", t)
-        return t
-
-    def _strip_thinking_tags(self, text: str) -> str:
-        """Remove <thought>, <think>, and similar reasoning blocks from model output."""
-        # Remove <thought>...</thought>, <think>...</think>, etc.
-        text = re.sub(r'<(?:thought|think|reasoning)>.*?</(?:thought|think|reasoning)>', '', text, flags=re.DOTALL)
-        # Remove unclosed thinking tags (model may not close them)
-        text = re.sub(r'<(?:thought|think|reasoning)>.*', '', text, flags=re.DOTALL)
-        # Clean up excess whitespace left behind
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
-
-    def _sanitize_response(self, text: str) -> str:
-        """Strip markdown headers, table syntax, and underline-style headers
-        so the response looks clean on mobile apps that don't render markdown."""
-        # Remove markdown headers: ## Title  →  **Title**
-        text = re.sub(r'^#{1,6}\s+(.+)$', r'**\1**', text, flags=re.MULTILINE)
-        # Remove underline-style headers:  ======  or  ------
-        text = re.sub(r'^[=]{3,}\s*$', '', text, flags=re.MULTILINE)
-        text = re.sub(r'^[-]{3,}\s*$', '', text, flags=re.MULTILINE)
-        # Remove markdown table separator rows like  |---|---|---|
-        text = re.sub(r'^\|[-:\s|]+\|\s*$', '', text, flags=re.MULTILINE)
-        # Convert table rows (lines with 2+ pipes) to plain text with bullet separator
-        def _convert_table_row(m):
-            row = m.group(0)
-            cells = [c.strip() for c in row.strip('| \t').split('|') if c.strip()]
-            if not cells:
-                return ''
-            return ' • '.join(cells)
-        text = re.sub(r'^\|.+\|[ \t]*$', _convert_table_row, text, flags=re.MULTILINE)
-        # Clean up excess blank lines left behind
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
-
-    def _message_needs_location(self, text: str) -> bool:
-        text_lower = self._clean_user_text(text)
-        location_keywords = (
-            "zone", "here", "location", "nearby", "near me", "this area",
-            "my area", "where i am", "school zone", "no-horn", "no horn",
-            "speed limit", "gps", "coordinates",
-        )
-        return any(k in text_lower for k in location_keywords)
-
-    def _history_transcript(self, history: List[Dict], max_turns: int = 6) -> str:
-        lines = []
-        for turn in history[-max_turns:]:
-            role = "User" if turn.get("role") == "user" else "Assistant"
-            parts = turn.get("parts", [""])
-            content = (parts[0] if parts else "").strip()
-            if content:
-                lines.append(f"{role}: {content[:600]}")
-        return "\n".join(lines)
-
-    def _history_has_traffic_context(self, history: List[Dict]) -> bool:
-        blob = self._history_transcript(history, max_turns=10).lower()
-        hints = (
-            "fine", "penalty", "challan", "helmet", "speed", "offence", "offense",
-            "violation", "₹", "rupee", "section", "motor vehicle", "mv act", "license",
-        )
-        return any(h in blob for h in hints)
-
-    def _is_follow_up_question(self, text: str, history: List[Dict]) -> bool:
-        if len(history) < 2:
-            return False
-        clean = self._clean_user_text(text)
-        # Very short/vague messages should NOT be treated as follow-ups
-        # (e.g., "mmm", "ok", "what", "why", "lol", single words)
-        if len(clean.split()) <= 2 and not any(k in clean for k in ("fine", "penalty", "rule", "helmet", "licence", "license")):
-            return False
-        follow_up_keywords = (
-            "5th", "5 time", "5th time", "fifth", "fourth", "4th", "third", "3rd",
-            "second", "2nd", "repeat", "again", "same offence", "same offense",
-            "what about", "how about", "and if", "what if", "the fine", "my fine",
-            "that offence", "that offense", "previous", "earlier",
-        )
-        if any(k in clean for k in follow_up_keywords):
-            return True
-        # Only treat as follow-up if the message has some traffic-relevant words
-        traffic_hints = ("fine", "penalty", "section", "rule", "offence", "offense", "repeat", "vehicle", "helmet", "license", "licence")
-        has_traffic_hint = any(h in clean for h in traffic_hints)
-        return has_traffic_hint and self._history_has_traffic_context(history)
-
     def _is_traffic_query(self, text: str, history: Optional[List[Dict]] = None) -> bool:
         """True when the user message should use fines/rules/zone tools."""
         history = history or []
-        clean = self._clean_user_text(text)
+        clean = clean_user_text(text)
         if self._try_conversational_response(clean):
             return False
-        if history and self._is_follow_up_question(text, history):
+        if history and is_follow_up_question(text, history):
             return True
         traffic_keywords = (
             "fine", "penalty", "challan", "amount", "how much", "rupee", "₹",
@@ -427,10 +343,10 @@ class AgentEngine:
         )
         if any(k in clean for k in traffic_keywords):
             return True
-        return self._message_needs_location(text)
+        return message_needs_location(text)
 
     def _expand_follow_up_user_text(self, user_text: str, history: List[Dict]) -> str:
-        if not self._is_follow_up_question(user_text, history):
+        if not is_follow_up_question(user_text, history):
             return user_text
         return (
             f"{user_text}\n\n"
@@ -470,7 +386,7 @@ class AgentEngine:
 
     def _try_conversational_response(self, user_text: str) -> Optional[Dict[str, Any]]:
         """Fast path for greetings, meta questions, and very short ambiguous messages — no tools, no zone checks."""
-        text_lower = self._clean_user_text(user_text)
+        text_lower = clean_user_text(user_text)
         model_label = self._active_model_label()
 
         greetings = (
@@ -535,7 +451,7 @@ class AgentEngine:
             f"[System context: User is located in {loc_str}. User's primary vehicle is {veh_str}. "
             "DO NOT ask the user for country or vehicle. Assume this location and vehicle and look up the fine immediately.]"
         )
-        if gps and self._message_needs_location(user_text):
+        if gps and message_needs_location(user_text):
             context += f" User GPS lat={gps.get('lat')}, lon={gps.get('lon')}."
         return f"{user_text}\n\n{context}"
 
@@ -1034,7 +950,7 @@ class AgentEngine:
         response_parts: List[str] = []
 
         # ── 0. Handle fillers and out-of-domain ───────────────────────────
-        clean_text = self._clean_user_text(text)
+        clean_text = clean_user_text(text)
         
         filler_patterns = (
             "ok", "okay", "mmm", "hmm", "hmmm", "mhm", "ah", "oh",

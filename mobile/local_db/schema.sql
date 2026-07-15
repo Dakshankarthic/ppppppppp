@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS fines (
   section_ref TEXT,
   source_url TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
-  version_hash TEXT NOT NULL UNIQUE
+  version_hash TEXT NOT NULL UNIQUE,
+  country TEXT NOT NULL DEFAULT 'IN',
+  currency TEXT NOT NULL DEFAULT 'INR'
 );
 
 CREATE TABLE IF NOT EXISTS rules (

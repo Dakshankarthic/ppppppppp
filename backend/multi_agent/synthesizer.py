@@ -1,7 +1,10 @@
 import re
+import asyncio
 from typing import Dict, Any, List
 import json
 from openai import AsyncOpenAI
+
+from backend.multi_agent.history_utils import is_follow_up_question, history_transcript, message_needs_location
 
 from .query_classifier import QueryIntent
 from .config import config
@@ -27,6 +30,11 @@ COUNTRY_FOOTERS = {
     "unknown": ""
 }
 
+# Transient DeepSeek hiccups (timeouts, rate limits, momentary 5xx) shouldn't surface as
+# "An error occurred" on the first try — retry once before giving up.
+_DEEPSEEK_ATTEMPTS = 2
+_DEEPSEEK_RETRY_DELAY_SECONDS = 1.0
+
 class SmartSynthesizer:
     
     def __init__(self):
@@ -36,7 +44,7 @@ class SmartSynthesizer:
         )
         self.model_name = config.SYNTHESIZER_MODEL
     
-    async def synthesize(self, raw_evaluation, user_question, query_intent, all_sources, user_country="unknown", user_state="unknown", history: list = None, gps: str = None, vehicle: str = None):
+    async def synthesize(self, raw_evaluation, user_question, query_intent, all_sources, user_country="unknown", user_state="unknown", history: List[Dict] = None, gps: Dict[str, float] = None, vehicle: str = None):
         # Convert all_sources (list of SourceAnswer) into the dictionary format expected by the logic
         sources_data = {
             'db_answers': [s for s in all_sources if s.source.value == 'db'],
@@ -143,17 +151,29 @@ class SmartSynthesizer:
             for r in sources.get("google_answers", [])[:5]
         ])
 
+    def _enrich_question(self, question, history, gps, vehicle, country, state):
+        enriched = question
+        if history and is_follow_up_question(question, history):
+            transcript = history_transcript(history)
+            enriched = f"Transcript context:\n{transcript}\n\nCurrent question: {question}\n(Note: if this question refers back to the prior topic, carry that context forward.)"
+        
+        if gps and message_needs_location(question):
+            enriched = f"{enriched}\n(Note: the user is currently at GPS {gps['lat']}, {gps['lon']} which resolved to {state}, {country}. Frame your answer context around their location.)"
+            
+        if vehicle:
+            enriched = f"{enriched}\n(Note: the user is asking regarding a {vehicle}. Frame your answer context around their vehicle type.)"
+            
+        return enriched
+
     def _build_full_prompt(self, sources, question, user_country, user_state, history=None, gps=None, vehicle=None) -> str:
+        question = self._enrich_question(question, history, gps, vehicle, user_country, user_state)
         partial_info = ""
         for s in sources.get("db_answers", []):
             partial_info += str(s.answer) + "\n"
         if sources.get("ollama_answer"):
             partial_info += str(sources["ollama_answer"].answer) + "\n"
 
-        context_str = self._build_context_str(history, gps, vehicle)
-
         return f"""USER ASKED: "{question}"
-{context_str}
         Here is data from DB and AI:
         {partial_info[:1500]}
 
@@ -166,6 +186,8 @@ class SmartSynthesizer:
         - Keep it structured and easy to read."""
 
     def _build_web_enhanced_prompt(self, sources, question, user_country, user_state, history=None, gps=None, vehicle=None) -> str:
+        question = self._enrich_question(question, history, gps, user_country, user_state)
+>>>>>>> origin/main
         google_text = self._google_text(sources)
         country_display = user_country.replace('_', ' ').title() if user_country != "unknown" else "international jurisdictions"
         if user_state and user_state != "unknown":
@@ -217,33 +239,58 @@ IMPORTANT FORMATTING RULES:
 Length: 700-1000 words"""
 
     def _build_db_expanded_prompt(self, sources, question, user_country, user_state, history=None, gps=None, vehicle=None) -> str:
+        question = self._enrich_question(question, history, gps, vehicle, user_country, user_state)
         db_text = "\n".join([str(s.answer) for s in sources.get("db_answers", [])])
-        context_str = self._build_context_str(history, gps, vehicle)
-        return f"USER ASKED: {question}\n{context_str}\nDB DATA: {db_text}\nExpand this strictly based on DB facts."
+        return f"USER ASKED: {question}\nDB DATA: {db_text}\nExpand this strictly based on DB facts."
 
     def _build_fallback_prompt(self, question, user_country, user_state, history=None, gps=None, vehicle=None) -> str:
+        question = self._enrich_question(question, history, gps, vehicle, user_country, user_state)
         country_display = user_country.replace('_', ' ').title() if user_country != "unknown" else "general"
         if user_state and user_state != "unknown":
             country_display = f"{user_state}, {country_display}"
         context_str = self._build_context_str(history, gps, vehicle)
         return f"USER ASKED: {question}\n{context_str}\nAnswer directly based on general knowledge of {country_display} traffic laws."
 
-    async def _synthesize_full(self, eval_result, sources, question, intent, user_country, user_state, history, gps, vehicle):
+    async def _synthesize_full(self, eval_result, sources, question, intent, user_country, user_state, history=None, gps=None, vehicle=None):
         prompt = self._build_full_prompt(sources, question, user_country, user_state, history, gps, vehicle)
         return await self._call_local_llm(prompt, stream=False, user_country=user_country, user_state=user_state)
 
-    async def _synthesize_from_web_enhanced(self, sources, question, intent, user_country, user_state, history, gps, vehicle):
+    async def _synthesize_from_web_enhanced(self, sources, question, intent, user_country, user_state, history=None, gps=None, vehicle=None):
         enhancement_prompt = self._build_web_enhanced_prompt(sources, question, user_country, user_state, history, gps, vehicle)
         answer = await self._call_local_llm(enhancement_prompt, stream=False, user_country=user_country, user_state=user_state)
         return answer if answer else self._google_text(sources)
 
-    async def _synthesize_db_expanded(self, sources, question, intent, user_country, user_state, history, gps, vehicle):
+    async def _synthesize_db_expanded(self, sources, question, intent, user_country, user_state, history=None, gps=None, vehicle=None):
         prompt = self._build_db_expanded_prompt(sources, question, user_country, user_state, history, gps, vehicle)
         return await self._call_local_llm(prompt, stream=False, user_country=user_country, user_state=user_state)
 
-    async def _synthesize_fallback(self, question, intent, user_country, user_state, history, gps, vehicle):
+    async def _synthesize_fallback(self, question, intent, user_country, user_state, history=None, gps=None, vehicle=None):
         prompt = self._build_fallback_prompt(question, user_country, user_state, history, gps, vehicle)
         return await self._call_local_llm(prompt, stream=False, user_country=user_country, user_state=user_state)
+        return await self._call_local_llm(prompt, stream=False, user_country=user_country, user_state=user_state)
+
+    async def _create_completion(self, system_prompt: str, prompt: str, stream: bool):
+        """Calls DeepSeek with one retry on transient failures (timeouts, rate limits,
+        momentary 5xx) before giving up. Raises the last error if every attempt fails."""
+        last_err: Exception | None = None
+        for attempt in range(_DEEPSEEK_ATTEMPTS):
+            try:
+                return await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.4,
+                    max_tokens=2048,
+                    stream=stream,
+                )
+            except Exception as e:
+                last_err = e
+                print(f"DeepSeek API call failed (attempt {attempt + 1}/{_DEEPSEEK_ATTEMPTS}): {e}")
+                if attempt + 1 < _DEEPSEEK_ATTEMPTS:
+                    await asyncio.sleep(_DEEPSEEK_RETRY_DELAY_SECONDS)
+        raise last_err if last_err is not None else RuntimeError("DeepSeek call failed with no exception captured")
 
     async def _call_local_llm(self, prompt: str, stream: bool = False, user_country: str = "unknown", user_state: str = "unknown"):
         """When stream=True, returns the raw async completion-chunk iterator instead of
@@ -253,32 +300,15 @@ Length: 700-1000 words"""
             system_prompt = system_prompt.replace("assistant.", f"assistant for {user_state}.")
             system_prompt = system_prompt.replace("advisor.", f"advisor for {user_state}.")
         if stream:
-            return await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4,
-                max_tokens=2048,
-                stream=True,
-            )
+            return await self._create_completion(system_prompt, prompt, stream=True)
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4,
-                max_tokens=2048
-            )
+            response = await self._create_completion(system_prompt, prompt, stream=False)
             return response.choices[0].message.content
         except Exception as e:
             print(f"Error calling DeepSeek Synthesizer API: {e}")
             return "An error occurred while generating the guide."
 
-    async def synthesize_stream(self, raw_evaluation, user_question, query_intent, all_sources, user_country="unknown", user_state="unknown", history: list = None, gps: str = None, vehicle: str = None):
+    async def synthesize_stream(self, raw_evaluation, user_question, query_intent, all_sources, user_country="unknown", user_state="unknown", history: List[Dict] = None, gps: Dict[str, float] = None, vehicle: str = None):
         """Streaming counterpart to synthesize(): same branching logic to pick a prompt, but
         yields text deltas as they arrive instead of returning one final string.
 

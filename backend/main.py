@@ -274,7 +274,9 @@ async def handle_query_stream(request: QueryRequest = Body(...)):
             async for kind, payload in multi_agent_bot.process_query_stream(
                 request.text,
                 user_profile_country=request.country,
-                user_profile_state=request.state
+                user_profile_state=request.state,
+                conversation_history=request.history,
+                gps=request.gps
             ):
                 if kind == "delta":
                     yield f"data: {_json.dumps({'type': 'delta', 'text': payload})}\n\n"
@@ -372,6 +374,52 @@ def calculate_challan(request: ChallanRequest = Body(...)):
             "last_updated": datetime.now().isoformat(),
             "message": "No pending challans found for this vehicle number.",
         }
+
+
+@app.get("/challan/sync")
+def sync_challan_data():
+    """
+    Full-snapshot sync for the mobile app's offline SQLite cache (mobile/local_db/schema.sql):
+    fines + rules + geofence zones, shaped to match that schema exactly. The dataset is small
+    (~400 rows total) so the client just replaces its local tables wholesale on each sync
+    rather than diffing — this data changes rarely, so a cache-first offline calculator built
+    on top of this snapshot doesn't trade away much freshness.
+    """
+    from shapely.geometry import mapping as shapely_mapping
+
+    fines = fine_lookup.get_all() if fine_lookup else []
+
+    rules = [
+        {
+            "rule_id": rule["rule_id"],
+            "section": rule.get("section"),
+            "title": rule.get("title", ""),
+            "description": rule.get("description", ""),
+            "state": "ALL",
+            "raw_json": json.dumps(rule, ensure_ascii=False),
+        }
+        for rule in (rules_loader.rules if rules_loader else [])
+    ]
+
+    zones = [
+        {
+            "zone_id": zone["properties"].get("zone_id"),
+            "zone_type": zone["properties"].get("zone_type"),
+            "state": zone["properties"].get("state", "ALL"),
+            "rule_set_id": zone["properties"].get("rule_set_id"),
+            "geometry_json": json.dumps(shapely_mapping(zone["geometry"])),
+            "fine_multiplier": zone["properties"].get("fine_multiplier", 1.0),
+        }
+        for zone in (geofencing.zones if geofencing else [])
+    ]
+
+    return {
+        "fines": fines,
+        "rules": rules,
+        "zones": zones,
+        "synced_at": datetime.now().isoformat(),
+    }
+
 
 import urllib.request
 import xml.etree.ElementTree as ET

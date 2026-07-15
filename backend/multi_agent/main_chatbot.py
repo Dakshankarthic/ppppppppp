@@ -1,5 +1,8 @@
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, List
+import os
+from backend.modules.geofencing.offline_geocoder import reverse_geocode
+from .constraint_enforcer import check_required_fields
 
 from .query_classifier import QueryClassifier, QueryIntent
 from .query_classifier_enhanced import EnhancedQueryClassifier
@@ -33,7 +36,14 @@ class TrafficPolicyChatbot:
         print(f"PROCESSING: {user_question[:60]}...")
         print(f"{'='*60}")
         
-        intent_info = self.classifier.classify(user_question)
+        conversation_history = conversation_history or []
+        if gps and 'lat' in gps and 'lon' in gps:
+            zones_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'zones')
+            geo = reverse_geocode(gps['lat'], gps['lon'], zones_dir)
+            if geo.get('state') and geo['state'] != 'UNKNOWN':
+                user_profile_state = geo['state']
+                user_profile_country = 'india'
+        intent_info = self.classifier.classify(user_question, history=conversation_history)
         
         # Handle greetings immediately
         if intent_info.get("_should_respond") == False:
@@ -56,7 +66,16 @@ class TrafficPolicyChatbot:
             
         print(f"\n[INFO] Step 1: Intent = {intent.value}")
         
-        sources = await self.aggregator.fetch_all_sources(user_question)
+        detected_country = intent_info.get("detected_country", "unknown")
+        
+        # If NLP didn't detect a country, fallback to user's profile country if provided
+        final_country = detected_country
+        if final_country == "unknown" and user_profile_country:
+            final_country = user_profile_country.lower().replace(" ", "_")
+            
+        final_state = user_profile_state or "unknown"
+
+        sources = await self.aggregator.fetch_all_sources(user_question, user_state=final_state)
         print(f"[INFO] Step 2: Fetched sources")
         
         judge_result = await self.judge.evaluate_sources(
@@ -75,18 +94,8 @@ class TrafficPolicyChatbot:
         if judge_result.get("fatal_flaw_detected"):
             print("[INFO] Fatal flaw detected - triggering research...")
             sources = await self._retry_with_corrected_scope(
-                user_question, intent, judge_result
-            )
-        
-        detected_country = intent_info.get("detected_country", "unknown")
-        
-        # If NLP didn't detect a country, fallback to user's profile country if provided
-        final_country = detected_country
-        if final_country == "unknown" and user_profile_country:
-            final_country = user_profile_country.lower().replace(" ", "_")
-            
-        final_state = user_profile_state or "unknown"
-        
+                user_question, intent, judge_result, user_state=final_state
+            )        
         final_output = await self.synthesizer.synthesize(
             raw_evaluation=judge_result,
             user_question=user_question,
@@ -100,6 +109,11 @@ class TrafficPolicyChatbot:
         )
         
         final_answer = final_output["answer"]
+        
+        if intent == QueryIntent.SPECIFIC_RULE:
+            is_valid, violations, fixed_answer = check_required_fields(final_answer, sources, intent)
+            if not is_valid:
+                final_answer = fixed_answer
         
         # Apply formatting fix
         if not final_answer.startswith("→") and not final_answer.startswith("**Hello"):
@@ -123,14 +137,15 @@ class TrafficPolicyChatbot:
         self,
         question: str,
         intent: QueryIntent,
-        failed_eval: Dict
+        failed_eval: Dict,
+        user_state: str = None
     ):
         print("[INFO] Correcting scope mismatch...")
         if intent == QueryIntent.BROAD_EDUCATIONAL:
             return await self.aggregator.fetch_all_sources(
-                user_question=question + " [FORCE COMPREHENSIVE]"
+                user_question=question + " [FORCE COMPREHENSIVE]", user_state=user_state
             )
-        return await self.aggregator.fetch_all_sources(question)
+        return await self.aggregator.fetch_all_sources(question, user_state=user_state)
 
     async def process_query_stream(self, user_question: str, user_profile_country: str = None, user_profile_state: str = None, history: list = None, gps: str = None, vehicle: str = None):
         """Streaming counterpart to process_query(): runs the same classify → aggregate →
@@ -140,7 +155,14 @@ class TrafficPolicyChatbot:
         Yields ("delta", text) chunks as they arrive, followed by exactly one
         ("done", sources_consulted) tuple at the end.
         """
-        intent_info = self.classifier.classify(user_question)
+        conversation_history = conversation_history or []
+        if gps and 'lat' in gps and 'lon' in gps:
+            zones_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'zones')
+            geo = reverse_geocode(gps['lat'], gps['lon'], zones_dir)
+            if geo.get('state') and geo['state'] != 'UNKNOWN':
+                user_profile_state = geo['state']
+                user_profile_country = 'india'
+        intent_info = self.classifier.classify(user_question, history=conversation_history)
 
         if intent_info.get("_should_respond") == False:
             yield ("delta", "Hello! I'm DriveLegal, your AI traffic law assistant.\n\nI can help you with:\n\n"
@@ -156,7 +178,15 @@ class TrafficPolicyChatbot:
         else:
             intent = QueryIntent.SPECIFIC_RULE
 
-        sources = await self.aggregator.fetch_all_sources(user_question)
+        detected_country = intent_info.get("detected_country", "unknown")
+        
+        final_country = detected_country
+        if final_country == "unknown" and user_profile_country:
+            final_country = user_profile_country.lower().replace(" ", "_")
+            
+        final_state = user_profile_state or "unknown"
+
+        sources = await self.aggregator.fetch_all_sources(user_question, user_state=final_state)
 
         judge_result = await self.judge.evaluate_sources(
             sources=sources,
@@ -170,15 +200,9 @@ class TrafficPolicyChatbot:
             judge_result["needs_research"] = False
 
         if judge_result.get("fatal_flaw_detected"):
-            sources = await self._retry_with_corrected_scope(user_question, intent, judge_result)
+            sources = await self._retry_with_corrected_scope(user_question, intent, judge_result, user_state=final_state)
 
-        detected_country = intent_info.get("detected_country", "unknown")
-        
-        final_country = detected_country
-        if final_country == "unknown" and user_profile_country:
-            final_country = user_profile_country.lower().replace(" ", "_")
-            
-        final_state = user_profile_state or "unknown"
+
 
         async for chunk in self.synthesizer.synthesize_stream(
             raw_evaluation=judge_result,
