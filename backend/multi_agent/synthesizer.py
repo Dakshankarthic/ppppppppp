@@ -186,8 +186,7 @@ class SmartSynthesizer:
         - Keep it structured and easy to read."""
 
     def _build_web_enhanced_prompt(self, sources, question, user_country, user_state, history=None, gps=None, vehicle=None) -> str:
-        question = self._enrich_question(question, history, gps, user_country, user_state)
->>>>>>> origin/main
+        question = self._enrich_question(question, history, gps, vehicle, user_country, user_state)
         google_text = self._google_text(sources)
         country_display = user_country.replace('_', ' ').title() if user_country != "unknown" else "international jurisdictions"
         if user_state and user_state != "unknown":
