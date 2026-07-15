@@ -88,8 +88,13 @@ class EnhancedQueryClassifier:
             categories = self.RULE_CATEGORIES[:6]  # Default top 6
             fetch_strategy = "multi_topic"
         
-        # Extract Country Jurisdiction
-        detected_country = self._extract_country(context_text)
+        # Extract Country Jurisdiction. Check the current question alone first so an
+        # explicit country mention always wins over a stale one in the chat history
+        # (context_text prepends history for follow-ups, and "the fine" alone is enough
+        # to count as a follow-up, so this affects most queries).
+        detected_country = self._extract_country(question_lower)
+        if detected_country == "unknown":
+            detected_country = self._extract_country(context_text)
         
         return {
             "intent_type": intent_type,
