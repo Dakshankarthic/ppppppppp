@@ -13,6 +13,8 @@ class Config(BaseModel):
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
     OLLAMA_MODEL: str = "gemma:2b"
     
+    SERPER_API_KEY: str = os.getenv("SERPER_API_KEY", "")
+    
     MAX_SEARCH_RESULTS: int = 3
     MAX_ITERATIONS: int = 3
 

@@ -124,42 +124,51 @@ class SourceAggregator:
             if intent == QueryIntent.BROAD_EDUCATIONAL:
                 query = f"India traffic rules comprehensive guide {metadata.get('categories_needed', [''])[0]}"
                 
-            def sync_search():
-                try:
-                    from duckduckgo_search import DDGS
-                    with DDGS() as ddgs:
-                        return list(ddgs.text(query, max_results=3))
-                except ImportError:
-                    try:
-                        from ddgs import DDGS
-                        with DDGS() as ddgs:
-                            return list(ddgs.text(query, max_results=3))
-                    except ImportError:
-                        print("[WARN] DuckDuckGo not available, skipping web search")
-                        return []
+            if not config.SERPER_API_KEY:
+                print("[WARN] SERPER_API_KEY not found. Please add it to your .env file to enable enterprise search.")
+                return SourceAnswer(
+                    source=SourceType.GOOGLE,
+                    answer="Search API key missing. Please configure SERPER_API_KEY.",
+                    confidence=0.0,
+                    metadata={"error": "missing_api_key"}
+                )
+
+            import httpx
+            import json
             
-            results = await asyncio.to_thread(sync_search)
+            headers = {
+                'X-API-KEY': config.SERPER_API_KEY,
+                'Content-Type': 'application/json'
+            }
+            payload = json.dumps({"q": query, "num": config.MAX_SEARCH_RESULTS})
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post('https://google.serper.dev/search', headers=headers, data=payload)
+                response.raise_for_status()
+                data = response.json()
+                
+            results = data.get("organic", [])
             
             if not results:
                 return SourceAnswer(
                     source=SourceType.GOOGLE,
                     answer="No search results found.",
                     confidence=0.0,
-                    metadata={"source": "duckduckgo"}
+                    metadata={"source": "serper"}
                 )
             
             urls = []
-            compiled_answer = "DuckDuckGo Search Results:\n"
-            for idx, res in enumerate(results):
-                compiled_answer += f"{idx+1}. {res.get('title')}: {res.get('body')}\n"
-                if res.get('href'):
-                    urls.append(res.get('href'))
+            compiled_answer = "Google Search Results (Serper.dev):\n"
+            for idx, res in enumerate(results[:config.MAX_SEARCH_RESULTS]):
+                compiled_answer += f"{idx+1}. {res.get('title')}: {res.get('snippet')}\n"
+                if res.get('link'):
+                    urls.append(res.get('link'))
                 
             return SourceAnswer(
                 source=SourceType.GOOGLE,
                 answer=compiled_answer,
-                confidence=0.75,
-                metadata={"source": "duckduckgo", "raw_results": len(results), "urls": urls}
+                confidence=0.8,
+                metadata={"source": "serper", "raw_results": len(results), "urls": urls}
             )
         except Exception as e:
             return SourceAnswer(source=SourceType.GOOGLE, answer=f"Failed to fetch web results: {str(e)}", confidence=0.0, metadata={"error": str(e)})
