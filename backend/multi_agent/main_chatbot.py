@@ -36,15 +36,15 @@ class TrafficPolicyChatbot:
         print(f"PROCESSING: {user_question[:60]}...")
         print(f"{'='*60}")
         
-        conversation_history = conversation_history or []
+        history = history or []
         if gps and 'lat' in gps and 'lon' in gps:
             zones_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'zones')
             geo = reverse_geocode(gps['lat'], gps['lon'], zones_dir)
             if geo.get('state') and geo['state'] != 'UNKNOWN':
                 user_profile_state = geo['state']
                 user_profile_country = 'india'
-        intent_info = self.classifier.classify(user_question, history=conversation_history)
-        
+        intent_info = self.classifier.classify(user_question, history=history)
+
         # Handle greetings immediately
         if intent_info.get("_should_respond") == False:
             return {
@@ -155,14 +155,14 @@ class TrafficPolicyChatbot:
         Yields ("delta", text) chunks as they arrive, followed by exactly one
         ("done", sources_consulted) tuple at the end.
         """
-        conversation_history = conversation_history or []
+        history = history or []
         if gps and 'lat' in gps and 'lon' in gps:
             zones_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'zones')
             geo = reverse_geocode(gps['lat'], gps['lon'], zones_dir)
             if geo.get('state') and geo['state'] != 'UNKNOWN':
                 user_profile_state = geo['state']
                 user_profile_country = 'india'
-        intent_info = self.classifier.classify(user_question, history=conversation_history)
+        intent_info = self.classifier.classify(user_question, history=history)
 
         if intent_info.get("_should_respond") == False:
             yield ("delta", "Hello! I'm DriveLegal, your AI traffic law assistant.\n\nI can help you with:\n\n"

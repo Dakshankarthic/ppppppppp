@@ -275,8 +275,9 @@ async def handle_query_stream(request: QueryRequest = Body(...)):
                 request.text,
                 user_profile_country=request.country,
                 user_profile_state=request.state,
-                conversation_history=request.history,
-                gps=request.gps
+                history=request.history,
+                gps=request.gps,
+                vehicle=request.vehicle
             ):
                 if kind == "delta":
                     yield f"data: {_json.dumps({'type': 'delta', 'text': payload})}\n\n"
