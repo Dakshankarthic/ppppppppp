@@ -28,7 +28,7 @@ class TrafficPolicyChatbot:
         print("   - Scope-aware judging: ENABLED")
         print("   - Smart confidence handling: ENABLED")
     
-    async def process_query(self, user_question: str, user_profile_country: str = None, user_profile_state: str = None) -> Dict[str, Any]:
+    async def process_query(self, user_question: str, user_profile_country: str = None, user_profile_state: str = None, history: list = None, gps: str = None, vehicle: str = None) -> Dict[str, Any]:
         print(f"\n{'='*60}")
         print(f"PROCESSING: {user_question[:60]}...")
         print(f"{'='*60}")
@@ -93,7 +93,10 @@ class TrafficPolicyChatbot:
             query_intent=intent,
             all_sources=sources,
             user_country=final_country,
-            user_state=final_state
+            user_state=final_state,
+            history=history,
+            gps=gps,
+            vehicle=vehicle
         )
         
         final_answer = final_output["answer"]
@@ -129,7 +132,7 @@ class TrafficPolicyChatbot:
             )
         return await self.aggregator.fetch_all_sources(question)
 
-    async def process_query_stream(self, user_question: str, user_profile_country: str = None, user_profile_state: str = None):
+    async def process_query_stream(self, user_question: str, user_profile_country: str = None, user_profile_state: str = None, history: list = None, gps: str = None, vehicle: str = None):
         """Streaming counterpart to process_query(): runs the same classify → aggregate →
         judge pipeline (not streamed — same latency as today), then yields the synthesizer's
         answer as it's generated instead of returning one final string.
@@ -183,7 +186,10 @@ class TrafficPolicyChatbot:
             query_intent=intent,
             all_sources=sources,
             user_country=final_country,
-            user_state=final_state
+            user_state=final_state,
+            history=history,
+            gps=gps,
+            vehicle=vehicle
         ):
             yield ("delta", chunk)
 

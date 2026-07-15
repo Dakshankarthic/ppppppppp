@@ -11,7 +11,7 @@ class Config(BaseModel):
     SYNTHESIZER_MODEL: str = "deepseek-chat"
     
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
-    OLLAMA_MODEL: str = "gemma4:31b-cloud"
+    OLLAMA_MODEL: str = "gemma:2b"
     
     MAX_SEARCH_RESULTS: int = 3
     MAX_ITERATIONS: int = 3

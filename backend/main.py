@@ -236,7 +236,10 @@ async def handle_query(request: QueryRequest = Body(...)):
         result = await multi_agent_bot.process_query(
             request.text,
             user_profile_country=request.country,
-            user_profile_state=request.state
+            user_profile_state=request.state,
+            history=request.history,
+            gps=request.gps,
+            vehicle=request.vehicle
         )
         
         # Map to the format expected by the frontend
