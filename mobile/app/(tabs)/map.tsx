@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getApiBaseUrl } from '../../lib/api';
 import { useSettings } from '../../hooks/useSettings';
 import { useLocalSearchParams } from 'expo-router';
+import iitmPoisData from '../../lib/data/iitmPois.json';
 
 const BACKEND_URL = getApiBaseUrl();
 
@@ -27,20 +28,9 @@ interface POI {
   address: string;
 }
 
-const POIS: POI[] = [
-  // Schools
-  { id: 's1', name: "St. Paul's School", type: 'school', latitude: 13.0850, longitude: 80.2680, address: "George Town, Chennai" },
-  { id: 's2', name: "Chennai Public School", type: 'school', latitude: 13.0810, longitude: 80.2720, address: "Periamet, Chennai" },
-  // Hospitals
-  { id: 'h1', name: "Government General Hospital", type: 'hospital', latitude: 13.0800, longitude: 80.2750, address: "Park Town, Chennai" },
-  { id: 'h2', name: "Appasamy Hospital", type: 'hospital', latitude: 13.0840, longitude: 80.2670, address: "George Town, Chennai" },
-  // Petrol Pumps
-  { id: 'p1', name: "HP Fuel Station", type: 'petrol', latitude: 13.0860, longitude: 80.2730, address: "George Town, Chennai" },
-  { id: 'p2', name: "Shell Petrol Station", type: 'petrol', latitude: 13.0790, longitude: 80.2690, address: "Vepery, Chennai" },
-  // Mechanic Sheds
-  { id: 'm1', name: "Chennai Motor Works", type: 'mechanic', latitude: 13.0870, longitude: 80.2710, address: "Sowcarpet, Chennai" },
-  { id: 'm2', name: "Quick Fix Garage", type: 'mechanic', latitude: 13.0805, longitude: 80.2700, address: "Periamet, Chennai" },
-];
+// Real schools, hospitals, fuel stations, and mechanic sheds within ~40km of
+// IIT Madras (12.9915, 80.2337), sourced from OpenStreetMap (see lib/data/iitmPois.json).
+const POIS: POI[] = iitmPoisData as POI[];
 
 export default function MapScreen() {
   const { t, setSharedLocation } = useSettings();
@@ -333,6 +323,7 @@ export default function MapScreen() {
               title={poi.name}
               description={poi.address}
               pinColor={pinCol}
+              tracksViewChanges={false}
             />
           );
         })}

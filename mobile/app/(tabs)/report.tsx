@@ -242,6 +242,12 @@ export default function ReportScreen() {
     const formattedDate = new Date(reportData.timestamp).toLocaleString();
     return (
       <SafeAreaView style={styles.safeArea}>
+        <View style={styles.historyHeader}>
+          <TouchableOpacity onPress={() => setSubmitted(false)} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color="#F9FAFB" />
+          </TouchableOpacity>
+          <Text style={styles.historyHeaderTitle}>{viewingHistory ? 'My Reports' : 'Report Incident'}</Text>
+        </View>
         <ScrollView contentContainerStyle={styles.sheetContainer}>
           <View style={styles.sheetPaper}>
             {/* Sheet Header (E-Challan Style) */}
