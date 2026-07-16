@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "TN_CHN_CAMPUS_IITM_001",
+        "zone_type": "speed_limit",
+        "state": "TN",
+        "city": "Chennai",
+        "rule_set_id": "RULE_GEN_SPEED_LIMIT",
+        "speed_limit_kmh": 20,
+        "active_hours": "ALL",
+        "fine_multiplier": 1.0,
+        "source": "IIT Madras campus traffic guidelines"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [80.2230, 12.9850],
+            [80.2500, 12.9850],
+            [80.2500, 13.0100],
+            [80.2230, 13.0100],
+            [80.2230, 12.9850]
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -6,7 +6,8 @@
       "files": [
         "TN/chennai_school_zones.geojson",
         "TN/chennai_no_horn.geojson",
-        "TN/nh_corridors.geojson"
+        "TN/nh_corridors.geojson",
+        "TN/iit_madras_campus.geojson"
       ]
     }
   ],
