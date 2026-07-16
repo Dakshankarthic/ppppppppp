@@ -39,6 +39,11 @@ export function getApiBaseUrl(): string {
     }
   }
 
+  // Release builds: always hit the production backend
+  if (!__DEV__) {
+    return 'https://13.222.36.11.nip.io';
+  }
+
   if (Platform.OS === 'android') {
     return `http://10.0.2.2:${API_PORT}`;
   }
