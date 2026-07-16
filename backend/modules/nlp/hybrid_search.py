@@ -188,14 +188,22 @@ class HybridSearch:
                 _safe_text(rule.get("section")),
             ]).strip()
 
+            metadata: Dict[str, Any] = {
+                "section":  _safe_text(rule.get("section")),
+                "title":    _safe_text(rule.get("title")),
+                "source":   "rules_json",
+            }
+            if rule.get("speed_limit_kmh") is not None:
+                metadata["speed_limit_kmh"] = rule.get("speed_limit_kmh")
+            if rule.get("fine_amount_inr") is not None:
+                metadata["fine_amount_inr"] = rule.get("fine_amount_inr")
+            if rule.get("fine_reason") is not None:
+                metadata["fine_reason"] = _safe_text(rule.get("fine_reason"))
+
             chunks.append({
                 "id":       rid,
                 "text":     text or rid,
-                "metadata": {
-                    "section":  _safe_text(rule.get("section")),
-                    "title":    _safe_text(rule.get("title")),
-                    "source":   "rules_json",
-                },
+                "metadata": metadata,
             })
         return chunks
 

@@ -384,6 +384,9 @@ class ToolExecutor:
                 "description": result.get("description"),
                 "is_state_override": result.get("is_state_override", False),
                 "state": state,
+                "speed_limit_kmh": result.get("speed_limit_kmh"),
+                "fine_amount_inr": result.get("fine_amount_inr"),
+                "fine_reason": result.get("fine_reason"),
             }
 
         return {
@@ -422,6 +425,10 @@ class ToolExecutor:
                     "zone_type": z.get("zone_type"),
                     "active_hours": z.get("active_hours", "ALL"),
                     "rules": z.get("rules", []),
+                    "speed_limit_kmh": z.get("speed_limit_kmh"),
+                    "fine_amount_inr": z.get("fine_amount_inr"),
+                    "fine_reason": z.get("fine_reason"),
+                    "source": z.get("source"),
                 }
                 for z in zones
             ],
@@ -454,7 +461,10 @@ class ToolExecutor:
                         "section": r.get("metadata", {}).get("section"),
                         "title": r.get("metadata", {}).get("title"),
                         "description": r.get("content"),
-                        "score": r.get("score")
+                        "score": r.get("score"),
+                        "speed_limit_kmh": r.get("metadata", {}).get("speed_limit_kmh"),
+                        "fine_amount_inr": r.get("metadata", {}).get("fine_amount_inr"),
+                        "fine_reason": r.get("metadata", {}).get("fine_reason"),
                     }
                     for r in results
                 ]

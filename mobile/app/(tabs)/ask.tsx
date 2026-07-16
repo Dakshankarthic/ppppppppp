@@ -63,7 +63,10 @@ export default function DriveLegalAssistant() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const { width } = useWindowDimensions();
-  const isDesktop = width >= 768;
+  // Persistent desktop sidebar is a web-only pattern — a native phone in landscape
+  // can easily exceed 768dp width, which would otherwise wrongly reserve sidebar
+  // space in the chat layout and squeeze message text into a sliver.
+  const isDesktop = Platform.OS === 'web' && width >= 768;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const sidebarWidth = 280;
   const sidebarAnim = useRef(new Animated.Value(0)).current;

@@ -181,8 +181,19 @@ export default function HomeScreen() {
         let pNameLower = placeName.toLowerCase();
         let speedLimit: number | null = 50;
         let zoneType = 'general';
-        
-        if (pNameLower.includes('school') || pNameLower.includes('college') || pNameLower.includes('academy')) {
+
+        // IIT Madras campus geofence (matches backend/data/zones/TN/iit_madras_campus.geojson)
+        const IITM_CAMPUS_BOUNDS = { minLat: 12.9850, maxLat: 13.0100, minLon: 80.2230, maxLon: 80.2500 };
+        const inIitmCampus =
+          loc.coords.latitude >= IITM_CAMPUS_BOUNDS.minLat &&
+          loc.coords.latitude <= IITM_CAMPUS_BOUNDS.maxLat &&
+          loc.coords.longitude >= IITM_CAMPUS_BOUNDS.minLon &&
+          loc.coords.longitude <= IITM_CAMPUS_BOUNDS.maxLon;
+
+        if (inIitmCampus) {
+          speedLimit = 20;
+          zoneType = 'campus_zone';
+        } else if (pNameLower.includes('school') || pNameLower.includes('college') || pNameLower.includes('academy')) {
           speedLimit = 30;
           zoneType = 'school_zone';
         } else if (pNameLower.includes('iit') || pNameLower.includes('campus') || pNameLower.includes('university') || pNameLower.includes('institute')) {

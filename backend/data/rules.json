@@ -1065,6 +1065,27 @@
       "state_overrides": [],
       "related_offence_codes": [],
       "penalty_ref": "DATASET_INFO"
+    },
+    {
+      "rule_id": "TN_IITM_CAMPUS_SPEED",
+      "section": "Campus Traffic Guidelines",
+      "act": "IIT Madras Institute Traffic Regulations",
+      "title": "IIT Madras Campus Speed Limit and Wildlife Protection Zone",
+      "description": "IIT Madras campus is a protected wildlife zone with a large resident population of deer, monkeys, and other wildlife that frequently cross the internal campus roads. To protect this wildlife and pedestrians, the campus-wide speed limit is capped at 20 km/h at all times, lower than the standard city speed limit. Speeding inside the IIT Madras campus attracts a fine of Rs. 10,000, higher than the standard speeding fine elsewhere in Chennai, specifically because of the elevated risk to deer, monkeys, and other animals on campus roads.",
+      "applies_to": [
+        "TN"
+      ],
+      "vehicle_classes": [
+        "ALL"
+      ],
+      "state_overrides": [],
+      "related_offence_codes": [
+        "SPEED_EXCESS"
+      ],
+      "penalty_ref": "TN_IITM_CAMPUS_FINE",
+      "speed_limit_kmh": 20,
+      "fine_amount_inr": 10000,
+      "fine_reason": "Wildlife protection zone — deer and monkeys frequently cross campus roads"
     }
   ]
 }

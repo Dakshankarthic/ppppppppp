@@ -12,6 +12,8 @@
         "speed_limit_kmh": 20,
         "active_hours": "ALL",
         "fine_multiplier": 1.0,
+        "fine_amount_inr": 10000,
+        "fine_reason": "IIT Madras campus is a protected wildlife zone with frequent deer and monkey crossings, so speeding fines are higher than standard city limits.",
         "source": "IIT Madras campus traffic guidelines"
       },
       "geometry": {
