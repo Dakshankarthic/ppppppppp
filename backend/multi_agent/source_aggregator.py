@@ -43,39 +43,40 @@ _STOPWORDS = {
 
 class SourceAggregator:
     
-    def __init__(self, fine_lookup=None, rules_loader=None):
+    def __init__(self, fine_lookup=None, rules_loader=None, geofencing_engine=None):
         self.fine_lookup = fine_lookup
         self.rules_loader = rules_loader
+        self.geofencing = geofencing_engine
         self.classifier = QueryClassifier()
-        
+
         self.ollama_client = AsyncOpenAI(
             api_key="ollama",
             base_url=config.OLLAMA_BASE_URL
         )
-    
-    async def fetch_all_sources(self, user_question: str, user_state: str = None) -> List[SourceAnswer]:
+
+    async def fetch_all_sources(self, user_question: str, user_state: str = None, gps: dict = None) -> List[SourceAnswer]:
         intent, metadata = self.classifier.classify(user_question)
         print(f"\n[INFO] Query Classified: {intent.value}")
         print(f"[INFO] Scope: {metadata['scope']}")
-        
+
         tasks = [
-            self._fetch_from_db(user_question, intent, metadata, user_state),
+            self._fetch_from_db(user_question, intent, metadata, user_state, gps),
             self._fetch_from_ollama(user_question, intent, metadata),
             self._fetch_from_google(user_question, intent, metadata)
         ]
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         valid_results = []
         for r in results:
             if isinstance(r, SourceAnswer):
                 valid_results.append(r)
             else:
                 print(f"Error fetching source: {r}")
-                
+
         return valid_results
-    
-    async def _fetch_from_db(self, question: str, intent: QueryIntent, metadata: dict, user_state: str = None) -> SourceAnswer:
+
+    async def _fetch_from_db(self, question: str, intent: QueryIntent, metadata: dict, user_state: str = None, gps: dict = None) -> SourceAnswer:
         """Ground the answer in the local fines.db + rules.json.
 
         Runs the (synchronous, SQLite) lookups in a worker thread so the
@@ -90,15 +91,36 @@ class SourceAggregator:
                     metadata={"error": "no_db_client"},
                 )
 
-            return await asyncio.to_thread(self._query_local_db, question, intent, metadata, user_state)
+            return await asyncio.to_thread(self._query_local_db, question, intent, metadata, user_state, gps)
         except Exception as e:
             return SourceAnswer(source=SourceType.DB, answer=str(e), confidence=0.0, metadata={"error": str(e)})
 
-    def _query_local_db(self, question: str, intent: QueryIntent, metadata: dict, user_state: str = None) -> SourceAnswer:
+    def _query_local_db(self, question: str, intent: QueryIntent, metadata: dict, user_state: str = None, gps: dict = None) -> SourceAnswer:
         country, state = detect_country_and_state(question)
         if state == "unknown" and user_state:
             state = user_state
         symbol = get_currency_symbol(country)
+
+        # 0. GPS-based zone override (school/campus/etc zones from geofencing engine)
+        #    takes priority over generic state-wide fines — e.g. IIT Madras campus
+        #    has its own 20 km/h limit + Rs.10,000 speeding fine, higher than TN's
+        #    standard speeding fine, so it must be surfaced ahead of that below.
+        zone_lines: List[str] = []
+        if self.geofencing and gps and gps.get("lat") is not None and gps.get("lon") is not None:
+            try:
+                zones = self.geofencing.get_applicable_rules(gps["lat"], gps["lon"])
+            except Exception:
+                zones = []
+            for z in zones:
+                name = z.get("zone_id", "Special zone").replace("_", " ")
+                bits = [f"ZONE OVERRIDE — {name} ({z.get('zone_type', 'zone')})"]
+                if z.get("speed_limit_kmh") is not None:
+                    bits.append(f"Speed limit: {z['speed_limit_kmh']} km/h")
+                if z.get("fine_amount_inr") is not None:
+                    bits.append(f"Speeding fine here: {symbol}{z['fine_amount_inr']}")
+                if z.get("fine_reason"):
+                    bits.append(f"Reason: {z['fine_reason']}")
+                zone_lines.append(" | ".join(bits))
 
         # 1. Which offences does the question actually mention?
         offence_codes = self._offences_in_question(question, intent, metadata)
@@ -148,9 +170,17 @@ class SourceAggregator:
                     desc = (rule.get("description") or "")[:220]
                     db_lines.append(f"{header} | {desc}" if desc else header)
 
+        # Zone overrides go first and win over the generic state-wide fine above.
+        db_lines = zone_lines + db_lines
+
         if db_lines:
             answer_text = f"Local DriveLegal database ({country}):\n" + "\n".join(f"- {ln}" for ln in db_lines)
-            confidence = 0.9 if fine_facts else 0.75
+            if zone_lines:
+                answer_text += (
+                    "\n\nNOTE: A ZONE OVERRIDE is active at this GPS location — its speed limit "
+                    "and fine amount take priority over the generic state-wide figures above."
+                )
+            confidence = 0.95 if zone_lines else (0.9 if fine_facts else 0.75)
         else:
             answer_text = f"No matching records in local database for this {country} query."
             confidence = 0.0
@@ -166,6 +196,7 @@ class SourceAggregator:
                 "state": state,
                 "offence_codes": offence_codes,
                 "fine_facts": fine_facts,
+                "zone_override": bool(zone_lines),
             },
         )
 

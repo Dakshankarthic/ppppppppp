@@ -19,9 +19,9 @@ class TrafficPolicyChatbot:
 
     MAX_ITERATIONS = 3
     
-    def __init__(self, fine_lookup=None, rules_loader=None):
+    def __init__(self, fine_lookup=None, rules_loader=None, geofencing_engine=None):
         self.classifier = EnhancedQueryClassifier()
-        self.aggregator = SourceAggregator(fine_lookup, rules_loader)
+        self.aggregator = SourceAggregator(fine_lookup, rules_loader, geofencing_engine)
         self.judge = JudgeLLM()
         self.synthesizer = SmartSynthesizer()
         
@@ -75,7 +75,7 @@ class TrafficPolicyChatbot:
             
         final_state = user_profile_state or "unknown"
 
-        sources = await self.aggregator.fetch_all_sources(user_question, user_state=final_state)
+        sources = await self.aggregator.fetch_all_sources(user_question, user_state=final_state, gps=gps)
         print(f"[INFO] Step 2: Fetched sources")
         
         judge_result = await self.judge.evaluate_sources(
@@ -94,8 +94,8 @@ class TrafficPolicyChatbot:
         if judge_result.get("fatal_flaw_detected"):
             print("[INFO] Fatal flaw detected - triggering research...")
             sources = await self._retry_with_corrected_scope(
-                user_question, intent, judge_result, user_state=final_state
-            )        
+                user_question, intent, judge_result, user_state=final_state, gps=gps
+            )
         final_output = await self.synthesizer.synthesize(
             raw_evaluation=judge_result,
             user_question=user_question,
@@ -138,14 +138,15 @@ class TrafficPolicyChatbot:
         question: str,
         intent: QueryIntent,
         failed_eval: Dict,
-        user_state: str = None
+        user_state: str = None,
+        gps: dict = None
     ):
         print("[INFO] Correcting scope mismatch...")
         if intent == QueryIntent.BROAD_EDUCATIONAL:
             return await self.aggregator.fetch_all_sources(
-                user_question=question + " [FORCE COMPREHENSIVE]", user_state=user_state
+                user_question=question + " [FORCE COMPREHENSIVE]", user_state=user_state, gps=gps
             )
-        return await self.aggregator.fetch_all_sources(question, user_state=user_state)
+        return await self.aggregator.fetch_all_sources(question, user_state=user_state, gps=gps)
 
     async def process_query_stream(self, user_question: str, user_profile_country: str = None, user_profile_state: str = None, history: list = None, gps: str = None, vehicle: str = None):
         """Streaming counterpart to process_query(): runs the same classify → aggregate →
@@ -186,7 +187,7 @@ class TrafficPolicyChatbot:
             
         final_state = user_profile_state or "unknown"
 
-        sources = await self.aggregator.fetch_all_sources(user_question, user_state=final_state)
+        sources = await self.aggregator.fetch_all_sources(user_question, user_state=final_state, gps=gps)
 
         judge_result = await self.judge.evaluate_sources(
             sources=sources,
@@ -200,7 +201,7 @@ class TrafficPolicyChatbot:
             judge_result["needs_research"] = False
 
         if judge_result.get("fatal_flaw_detected"):
-            sources = await self._retry_with_corrected_scope(user_question, intent, judge_result, user_state=final_state)
+            sources = await self._retry_with_corrected_scope(user_question, intent, judge_result, user_state=final_state, gps=gps)
 
 
 
